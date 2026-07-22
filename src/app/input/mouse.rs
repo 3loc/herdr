@@ -561,9 +561,8 @@ impl AppState {
                         self.view.workspace_card_areas.clone()
                     };
                     if let Some(card) = cards.iter().find(|card| {
-                        mouse.row == card.rect.y
-                            && mouse.column == card.rect.x
-                            && mouse.column < card.rect.x + card.rect.width
+                        let chevron = crate::ui::workspace_group_chevron_rect(card);
+                        mouse.row == chevron.y && mouse.column == chevron.x && chevron.width > 0
                     }) {
                         if let Some((key, collapsed)) =
                             crate::ui::workspace_parent_group_state(self, card.ws_idx)

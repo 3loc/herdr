@@ -1209,12 +1209,13 @@ mod tests {
         app.state.active = None;
         app.state.mode = Mode::Terminal;
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
-        let parent = app.state.view.workspace_card_areas[0].rect;
+        let parent = app.state.view.workspace_card_areas[0];
+        let chevron = crate::ui::workspace_group_chevron_rect(&parent);
 
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
-            parent.x,
-            parent.y,
+            chevron.x,
+            chevron.y,
         ));
 
         assert_eq!(app.state.active, None);
@@ -1223,8 +1224,8 @@ mod tests {
 
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
-            parent.x,
-            parent.y,
+            chevron.x,
+            chevron.y,
         ));
 
         assert!(!app.state.collapsed_space_keys.contains("repo-key"));
