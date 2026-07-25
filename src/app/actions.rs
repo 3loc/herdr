@@ -3113,7 +3113,8 @@ impl AppState {
         let sound = sound_for_toast_kind(kind, suppress_active_tab_notifications)
             .filter(|_| self.sound.allows(known_agent));
         let build_toast = || {
-            let workspace_label = self.workspaces[ws_idx].display_name();
+            let workspace_label =
+                self.workspaces[ws_idx].display_name_from_terminals(&self.terminals);
             let context =
                 notification_context(&self.workspaces[ws_idx], &workspace_label, ws_idx, pane_id);
             ToastNotification {

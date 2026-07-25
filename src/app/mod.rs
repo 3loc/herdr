@@ -2413,6 +2413,21 @@ mod tests {
     }
 
     #[test]
+    fn unchanged_git_status_drain_has_no_render_impact() {
+        let mut app = test_app();
+        app.git_refresh_in_flight = true;
+        app.event_tx
+            .try_send(AppEvent::GitStatusRefreshed {
+                results: Vec::new(),
+                cache_updates: Vec::new(),
+            })
+            .unwrap();
+
+        assert!(!app.drain_internal_events());
+        assert!(!app.git_refresh_in_flight);
+    }
+
+    #[test]
     fn internal_event_drain_limits_work_per_tick() {
         let mut app = test_app();
         for i in 0..=APP_EVENT_DRAIN_LIMIT {

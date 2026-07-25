@@ -586,26 +586,33 @@ impl App {
 
     pub(crate) fn drain_internal_events(&mut self) -> bool {
         self.drain_internal_events_up_to(super::APP_EVENT_DRAIN_LIMIT)
+            .1
     }
 
     pub(crate) fn drain_all_internal_events(&mut self) -> bool {
-        let mut had_event = false;
-        while self.drain_internal_events_up_to(super::APP_EVENT_DRAIN_LIMIT) {
-            had_event = true;
+        let mut changed = false;
+        loop {
+            let (had_event, batch_changed) =
+                self.drain_internal_events_up_to(super::APP_EVENT_DRAIN_LIMIT);
+            changed |= batch_changed;
+            if !had_event {
+                break;
+            }
         }
-        had_event
+        changed
     }
 
-    fn drain_internal_events_up_to(&mut self, limit: usize) -> bool {
+    fn drain_internal_events_up_to(&mut self, limit: usize) -> (bool, bool) {
         let mut had_event = false;
+        let mut changed = false;
         for _ in 0..limit {
             let Ok(ev) = self.event_rx.try_recv() else {
                 break;
             };
             had_event = true;
-            self.handle_internal_event_with_prefix_sync(ev);
+            changed |= self.handle_internal_event_with_prefix_sync(ev);
         }
-        had_event
+        (had_event, changed)
     }
 }
 

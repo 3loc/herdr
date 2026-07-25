@@ -1093,16 +1093,31 @@ impl Workspace {
             .or_else(|| Some(self.identity_cwd.clone()))
     }
 
+    #[cfg(test)]
     pub fn display_name(&self) -> String {
         if let Some(name) = &self.custom_name {
             return name.clone();
         }
 
-        if self.cached_identity_cwd == self.identity_cwd {
-            self.cached_auto_label.clone()
-        } else {
-            fallback_label_from_cwd(&self.identity_cwd)
+        self.automatic_display_name_for_cwd(&self.identity_cwd)
+    }
+
+    pub(crate) fn display_name_from_terminals(
+        &self,
+        terminals: &HashMap<TerminalId, TerminalState>,
+    ) -> String {
+        if let Some(name) = &self.custom_name {
+            return name.clone();
         }
+
+        let cwd = self
+            .tabs
+            .first()
+            .and_then(|tab| tab.terminal_id(tab.root_pane))
+            .and_then(|terminal_id| terminals.get(terminal_id))
+            .map(|terminal| &terminal.cwd)
+            .unwrap_or(&self.identity_cwd);
+        self.automatic_display_name_for_cwd(cwd)
     }
 
     pub fn display_name_from(
@@ -1115,14 +1130,16 @@ impl Workspace {
         }
 
         self.resolved_identity_cwd_from(terminals, terminal_runtimes)
-            .map(|cwd| {
-                if cwd == self.cached_identity_cwd {
-                    self.cached_auto_label.clone()
-                } else {
-                    fallback_label_from_cwd(&cwd)
-                }
-            })
+            .map(|cwd| self.automatic_display_name_for_cwd(&cwd))
             .unwrap_or_else(|| "workspace".into())
+    }
+
+    fn automatic_display_name_for_cwd(&self, cwd: &std::path::Path) -> String {
+        if cwd == self.cached_identity_cwd {
+            self.cached_auto_label.clone()
+        } else {
+            fallback_label_from_cwd(cwd)
+        }
     }
 
     pub fn branch(&self) -> Option<String> {
@@ -1640,6 +1657,24 @@ mod tests {
         std::fs::remove_dir_all(root).expect("remove cwd after cache admission");
 
         assert_eq!(ws.display_name(), "cached-repo");
+    }
+
+    #[test]
+    fn terminal_aware_display_name_uses_latest_admitted_identity_cache() {
+        let mut ws = Workspace::test_new("ignored");
+        let root_pane = ws.tabs[0].root_pane;
+        let terminal_id = ws.tabs[0].terminal_id(root_pane).unwrap().clone();
+        ws.custom_name = None;
+        ws.identity_cwd = PathBuf::from("/old/workspace");
+        ws.cached_identity_cwd = PathBuf::from("/new/repo/deep");
+        ws.cached_auto_label = "repo".into();
+        let terminals = HashMap::from([(
+            terminal_id.clone(),
+            TerminalState::new(terminal_id, PathBuf::from("/new/repo/deep")),
+        )]);
+
+        assert_eq!(ws.display_name_from_terminals(&terminals), "repo");
+        assert_eq!(ws.display_name(), "workspace");
     }
 
     #[test]
