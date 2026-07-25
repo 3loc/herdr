@@ -864,35 +864,100 @@ pub(super) fn render_sidebar_collapsed(app: &AppState, frame: &mut Frame, area: 
     render_sidebar_toggle(app, frame, area, true, p);
 }
 
-pub(crate) fn workspace_drop_indicator_row(
+pub(crate) fn workspace_drop_slots(
+    app: &AppState,
     cards: &[crate::app::state::WorkspaceCardArea],
     area: Rect,
-    insert_idx: usize,
-) -> Option<u16> {
-    if area.height == 0 {
-        return None;
+) -> Vec<(crate::app::state::WorkspaceDropTarget, u16)> {
+    if area.height == 0 || cards.is_empty() {
+        return Vec::new();
     }
     let list_bottom = area.y + area.height.saturating_sub(1);
+    let entries = workspace_list_entries(app);
+    let entry_position = |ws_idx| {
+        entries.iter().position(|entry| {
+            matches!(
+                entry,
+                WorkspaceListEntry::Workspace {
+                    ws_idx: entry_ws_idx,
+                    ..
+                } if *entry_ws_idx == ws_idx
+            )
+        })
+    };
+    let block_root_at = |entry_idx: usize| {
+        entries[..=entry_idx]
+            .iter()
+            .rev()
+            .find_map(|entry| match entry {
+                WorkspaceListEntry::Workspace {
+                    ws_idx,
+                    indented: false,
+                } => Some(*ws_idx),
+                WorkspaceListEntry::Workspace { .. } => None,
+            })
+    };
 
-    let first = cards.first()?;
-    if insert_idx == first.ws_idx {
-        return first.rect.y.checked_sub(1).filter(|y| *y < list_bottom);
+    let mut slots = Vec::new();
+    let mut previous_root = None;
+    for card in cards {
+        let Some(entry_idx) = entry_position(card.ws_idx) else {
+            continue;
+        };
+        let Some(root_idx) = block_root_at(entry_idx) else {
+            continue;
+        };
+        if previous_root == Some(root_idx) {
+            continue;
+        }
+        previous_root = Some(root_idx);
+        if let Some(row) = card.rect.y.checked_sub(1).filter(|row| *row < list_bottom) {
+            slots.push((
+                crate::app::state::WorkspaceDropTarget::Before(root_idx),
+                row,
+            ));
+        }
     }
 
-    if let Some(row) = cards
-        .last()
-        .filter(|card| insert_idx == card.ws_idx.saturating_add(1))
-        .map(|card| card.rect.y.saturating_add(card.rect.height))
-        .filter(|y| *y < list_bottom)
+    let Some(last) = cards.last() else {
+        return slots;
+    };
+    let Some(last_entry_idx) = entry_position(last.ws_idx) else {
+        return slots;
+    };
+    let next_entry = entries.get(last_entry_idx.saturating_add(1));
+    if matches!(
+        next_entry,
+        Some(WorkspaceListEntry::Workspace { indented: true, .. })
+    ) {
+        return slots;
+    }
+    let target = match next_entry {
+        Some(WorkspaceListEntry::Workspace { ws_idx, .. }) => {
+            crate::app::state::WorkspaceDropTarget::Before(*ws_idx)
+        }
+        None => crate::app::state::WorkspaceDropTarget::End,
+    };
+    let row = last.rect.y.saturating_add(last.rect.height);
+    if row < list_bottom
+        && slots
+            .last()
+            .is_none_or(|(last_target, _)| *last_target != target)
     {
-        return Some(row);
+        slots.push((target, row));
     }
+    slots
+}
 
-    if let Some(card) = cards.iter().find(|card| card.ws_idx == insert_idx) {
-        return card.rect.y.checked_sub(1).filter(|y| *y < list_bottom);
-    }
-
-    None
+pub(crate) fn workspace_drop_indicator_row(
+    app: &AppState,
+    cards: &[crate::app::state::WorkspaceCardArea],
+    area: Rect,
+    target: crate::app::state::WorkspaceDropTarget,
+) -> Option<u16> {
+    workspace_drop_slots(app, cards, area)
+        .into_iter()
+        .find_map(|(candidate, row)| (candidate == target).then_some(row))
 }
 
 pub(super) fn render_sidebar(
@@ -1136,9 +1201,9 @@ fn render_workspace_list(
     };
     let insertion_row = match app.drag.as_ref().map(|drag| &drag.target) {
         Some(crate::app::state::DragTarget::WorkspaceReorder {
-            insert_idx: Some(insert_idx),
+            drop_target: Some(drop_target),
             ..
-        }) => workspace_drop_indicator_row(&app.view.workspace_card_areas, area, *insert_idx),
+        }) => workspace_drop_indicator_row(app, &app.view.workspace_card_areas, area, *drop_target),
         _ => None,
     };
 
@@ -2478,13 +2543,18 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let area = Rect::new(0, 0, 30, 20);
         app.view.workspace_card_areas = compute_workspace_card_areas(&app, area);
         let list_area = workspace_list_rect(area, app.sidebar_section_split);
-        let indicator_row =
-            workspace_drop_indicator_row(&app.view.workspace_card_areas, list_area, 2).unwrap();
+        let indicator_row = workspace_drop_indicator_row(
+            &app,
+            &app.view.workspace_card_areas,
+            list_area,
+            crate::app::state::WorkspaceDropTarget::Before(2),
+        )
+        .unwrap();
         assert_eq!(indicator_row, app.view.workspace_card_areas[1].rect.y);
         app.drag = Some(crate::app::state::DragState {
             target: crate::app::state::DragTarget::WorkspaceReorder {
                 source_ws_idx: 0,
-                insert_idx: Some(2),
+                drop_target: Some(crate::app::state::WorkspaceDropTarget::Before(2)),
             },
         });
 
