@@ -428,7 +428,7 @@ impl Workspace {
         };
         let mut public_pane_numbers = HashMap::new();
         public_pane_numbers.insert(tab.root_pane, 1);
-        let (_cached_git_space, cached_auto_label, cached_git_status_key) =
+        let (cached_git_space, cached_auto_label, cached_git_status_key) =
             discover_workspace_git_identity(&initial_cwd);
         Ok((
             Self {
@@ -440,7 +440,7 @@ impl Workspace {
                 cached_git_status_key,
                 cached_git_branch: git_branch(&initial_cwd),
                 cached_git_ahead_behind: None,
-                cached_git_space: None,
+                cached_git_space,
                 worktree_space: None,
                 metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
                 metadata_token_sequences: HashMap::new(),
@@ -1632,6 +1632,49 @@ mod tests {
 
         assert_eq!(recovered.pane_id, source_pane);
         assert!(!target.tabs[0].panes.contains_key(&source_pane));
+    }
+
+    #[tokio::test]
+    async fn new_workspace_retains_discovered_git_metadata() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be after unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "herdr-workspace-git-metadata-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(root.join(".git")).expect("create git directory");
+        std::fs::write(root.join(".git/HEAD"), "ref: refs/heads/main\n").expect("write git head");
+        #[cfg(windows)]
+        let command = "C:\\Windows\\System32\\whoami.exe";
+        #[cfg(not(windows))]
+        let command = "/usr/bin/true";
+        let argv = vec![command.to_string()];
+        let (events, _) = mpsc::channel(64);
+        let render_notify = Arc::new(Notify::new());
+        let render_dirty = Arc::new(AtomicBool::new(false));
+
+        let (workspace, _terminal, runtime) = Workspace::new_argv_command(
+            root.clone(),
+            24,
+            80,
+            &argv,
+            1024,
+            crate::terminal_theme::TerminalTheme::default(),
+            events,
+            render_notify,
+            render_dirty,
+        )
+        .expect("create workspace");
+
+        let space = workspace
+            .git_space()
+            .expect("workspace should retain discovered git metadata");
+        assert_eq!(space.repo_root, root);
+
+        runtime.shutdown();
+        std::fs::remove_dir_all(root).expect("remove test repo");
     }
 
     #[test]
