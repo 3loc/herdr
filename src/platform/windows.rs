@@ -262,10 +262,12 @@ pub fn launch_server_daemon_command(command: &mut std::process::Command) -> std:
 }
 
 fn launch_server_daemon_with_wmi(command: &std::process::Command) -> std::io::Result<u32> {
+    // WMI resolves the class from this Rust type name, including CIM casing.
     #[allow(non_camel_case_types)]
     #[derive(serde::Deserialize)]
     struct Win32_Process;
 
+    // WMI serializes this embedded object using the matching CIM class name.
     #[allow(non_camel_case_types)]
     #[derive(serde::Serialize)]
     struct Win32_ProcessStartup {
@@ -366,6 +368,7 @@ fn effective_command_environment(command: &std::process::Command) -> std::io::Re
 fn windows_environment_key_cmp(left: &str, right: &str) -> Ordering {
     let left_wide: Vec<u16> = left.encode_utf16().collect();
     let right_wide: Vec<u16> = right.encode_utf16().collect();
+    // SAFETY: both pointers remain valid for the call and lengths count UTF-16 units.
     match unsafe {
         CompareStringOrdinal(
             left_wide.as_ptr(),
@@ -393,6 +396,7 @@ fn unicode_windows_value(value: &OsStr, label: &str) -> std::io::Result<String> 
 
 fn current_process_is_in_job() -> std::io::Result<bool> {
     let mut in_job = 0;
+    // SAFETY: `in_job` is a valid writable BOOL for the duration of the call.
     if unsafe { IsProcessInJob(GetCurrentProcess(), null_mut(), &mut in_job) } == 0 {
         return Err(std::io::Error::last_os_error());
     }
@@ -405,6 +409,7 @@ fn current_job_kills_processes_on_close() -> std::io::Result<bool> {
     }
 
     let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    // SAFETY: `limits` is writable and its exact buffer size is supplied.
     if unsafe {
         QueryInformationJobObject(
             null_mut(),
