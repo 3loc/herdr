@@ -396,6 +396,7 @@ fn should_skip_process_probe_for_lifecycle_authority(
     input: ProcessProbeInput,
 ) -> bool {
     full_lifecycle_authority_active
+        && input.foreground_pgid.is_some()
         && !input.pending_foreground_shell_clear
         && input.suppressed_agent.is_none()
         && input.has_process_probe
@@ -3727,6 +3728,21 @@ mod tests {
                 ..process_probe_input()
             }
         ));
+    }
+
+    #[test]
+    fn lifecycle_authority_keeps_periodic_probes_without_an_observed_group() {
+        let input = ProcessProbeInput {
+            current_agent: Some(Agent::Pi),
+            foreground_pgid: None,
+            last_foreground_pgid: None,
+            elapsed_since_process_check: PROCESS_RECHECK_IDENTIFIED,
+            ..process_probe_input()
+        };
+        assert!(!should_skip_process_probe_for_lifecycle_authority(
+            true, input
+        ));
+        assert!(should_probe_foreground_job(input));
     }
 
     #[test]
