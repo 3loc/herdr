@@ -126,10 +126,6 @@ impl AppState {
             return self.handle_settings_mouse(mouse).map(MouseAction::Settings);
         }
 
-        if self.mode_bar_covers_tab_row(mouse.column, mouse.row) {
-            return None;
-        }
-
         let launcher_enabled = self.view.layout != ViewLayout::Mobile
             && !self.sidebar_collapsed
             && matches!(
@@ -485,6 +481,10 @@ impl AppState {
                         }
                         return None;
                     }
+                }
+
+                if self.mode_bar_covers_tab_row(mouse.column, mouse.row) {
+                    return None;
                 }
 
                 if self.on_tab_scroll_left_button(mouse.column, mouse.row) {
@@ -917,6 +917,9 @@ impl AppState {
             }
 
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                if self.mode_bar_covers_tab_row(mouse.column, mouse.row) => {}
+
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
                 if self.on_tab_bar(mouse.column, mouse.row) =>
             {
                 match mouse.kind {
@@ -1067,7 +1070,8 @@ impl AppState {
             }
 
             MouseEventKind::Down(MouseButton::Right)
-                if self.tab_at(mouse.column, mouse.row).is_some() =>
+                if !self.mode_bar_covers_tab_row(mouse.column, mouse.row)
+                    && self.tab_at(mouse.column, mouse.row).is_some() =>
             {
                 if let (Some(ws_idx), Some(tab_idx)) =
                     (self.active, self.tab_at(mouse.column, mouse.row))
@@ -3446,10 +3450,20 @@ mod tests {
             new_tab.y,
         ));
 
+        app.state.drag = Some(DragState {
+            target: DragTarget::SidebarDivider,
+        });
+        app.handle_mouse(mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            second_tab.x,
+            second_tab.y,
+        ));
+
         assert_eq!(app.state.workspaces[0].active_tab, 0);
         assert_eq!(app.state.workspaces[0].tabs.len(), 2);
         assert!(app.state.context_menu.is_none());
         assert!(app.state.tab_press.is_none());
+        assert!(app.state.drag.is_none());
     }
 
     #[test]
