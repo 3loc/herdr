@@ -20,6 +20,34 @@ impl App {
             self.state.mode = Mode::Prefix;
             return;
         }
+        let search_prompt_active = self
+            .state
+            .copy_mode
+            .as_ref()
+            .is_some_and(|copy_mode| copy_mode.search.prompt.is_some());
+        if !search_prompt_active {
+            if let Some(action) =
+                super::navigate::terminal_direct_non_indexed_navigation_action(&self.state, &key)
+            {
+                self.execute_copy_mode_direct_action(action);
+                return;
+            }
+            if let Some(binding) = super::navigate::command_for_key(
+                &self.state,
+                &key,
+                super::navigate::BindingDispatch::Direct,
+            ) {
+                self.state.cancel_copy_mode(&self.terminal_runtimes);
+                self.launch_custom_command(binding, super::navigate::ActionContext::Direct);
+                return;
+            }
+            if let Some(action) =
+                super::navigate::terminal_direct_indexed_navigation_action(&self.state, &key)
+            {
+                self.execute_copy_mode_direct_action(action);
+                return;
+            }
+        }
         self.state
             .handle_copy_mode_key(&self.terminal_runtimes, key);
         self.dispatch_pending_clipboard_write();
@@ -83,82 +111,84 @@ impl AppState {
         if self.handle_copy_mode_search_prompt_key(terminal_runtimes, key.clone()) {
             return;
         }
-        match key.code {
-            KeyCode::Esc => {
-                let should_clear = self.copy_mode.as_ref().is_some_and(|copy_mode| {
-                    copy_mode.selection.is_some()
-                        || !copy_mode.search.query.is_empty()
-                        || !copy_mode.search.matches.is_empty()
-                        || copy_mode.search.direction.is_some()
-                });
-                if should_clear {
-                    self.clear_copy_mode_selection();
-                    if let Some(search) = self
-                        .copy_mode
-                        .as_mut()
-                        .map(|copy_mode| &mut copy_mode.search)
-                    {
-                        let geometry = search.geometry;
-                        *search = crate::app::state::CopyModeSearchState {
-                            geometry,
-                            ..Default::default()
-                        };
+        if key.modifiers.is_empty() {
+            match key.code {
+                KeyCode::Esc => {
+                    let should_clear = self.copy_mode.as_ref().is_some_and(|copy_mode| {
+                        copy_mode.selection.is_some()
+                            || !copy_mode.search.query.is_empty()
+                            || !copy_mode.search.matches.is_empty()
+                            || copy_mode.search.direction.is_some()
+                    });
+                    if should_clear {
+                        self.clear_copy_mode_selection();
+                        if let Some(search) = self
+                            .copy_mode
+                            .as_mut()
+                            .map(|copy_mode| &mut copy_mode.search)
+                        {
+                            let geometry = search.geometry;
+                            *search = crate::app::state::CopyModeSearchState {
+                                geometry,
+                                ..Default::default()
+                            };
+                        }
+                        return;
                     }
+                    self.exit_copy_mode(terminal_runtimes, false);
                     return;
                 }
-                self.exit_copy_mode(terminal_runtimes, false);
-                return;
+                KeyCode::Enter => {
+                    self.exit_copy_mode(terminal_runtimes, true);
+                    return;
+                }
+                KeyCode::Left => {
+                    self.move_copy_cursor(terminal_runtimes, 0, -1);
+                    return;
+                }
+                KeyCode::Down => {
+                    self.move_copy_cursor(terminal_runtimes, 1, 0);
+                    return;
+                }
+                KeyCode::Up => {
+                    self.move_copy_cursor(terminal_runtimes, -1, 0);
+                    return;
+                }
+                KeyCode::Right => {
+                    self.move_copy_cursor(terminal_runtimes, 0, 1);
+                    return;
+                }
+                KeyCode::PageUp => {
+                    self.scroll_copy_mode_page(terminal_runtimes, -1, false);
+                    return;
+                }
+                KeyCode::PageDown => {
+                    self.scroll_copy_mode_page(terminal_runtimes, 1, false);
+                    return;
+                }
+                KeyCode::Home => {
+                    self.copy_mode_line_edge(terminal_runtimes, false);
+                    return;
+                }
+                KeyCode::End => {
+                    self.copy_mode_line_edge(terminal_runtimes, true);
+                    return;
+                }
+                _ => {}
             }
-            KeyCode::Enter => {
-                self.exit_copy_mode(terminal_runtimes, true);
-                return;
-            }
-            KeyCode::Left => {
-                self.move_copy_cursor(terminal_runtimes, 0, -1);
-                return;
-            }
-            KeyCode::Down => {
-                self.move_copy_cursor(terminal_runtimes, 1, 0);
-                return;
-            }
-            KeyCode::Up => {
-                self.move_copy_cursor(terminal_runtimes, -1, 0);
-                return;
-            }
-            KeyCode::Right => {
-                self.move_copy_cursor(terminal_runtimes, 0, 1);
-                return;
-            }
-            KeyCode::PageUp => {
-                self.scroll_copy_mode_page(terminal_runtimes, -1, false);
-                return;
-            }
-            KeyCode::PageDown => {
-                self.scroll_copy_mode_page(terminal_runtimes, 1, false);
-                return;
-            }
-            KeyCode::Home => {
-                self.copy_mode_line_edge(terminal_runtimes, false);
-                return;
-            }
-            KeyCode::End => {
-                self.copy_mode_line_edge(terminal_runtimes, true);
-                return;
-            }
-            _ => {}
         }
 
         match (key.code, key.modifiers) {
-            (KeyCode::Char('b'), mods) if mods.contains(KeyModifiers::CONTROL) => {
+            (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
                 self.scroll_copy_mode_page(terminal_runtimes, -1, false)
             }
-            (KeyCode::Char('f'), mods) if mods.contains(KeyModifiers::CONTROL) => {
+            (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
                 self.scroll_copy_mode_page(terminal_runtimes, 1, false)
             }
-            (KeyCode::Char('u'), mods) if mods.contains(KeyModifiers::CONTROL) => {
+            (KeyCode::Char('u'), KeyModifiers::CONTROL) => {
                 self.scroll_copy_mode_page(terminal_runtimes, -1, true)
             }
-            (KeyCode::Char('d'), mods) if mods.contains(KeyModifiers::CONTROL) => {
+            (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
                 self.scroll_copy_mode_page(terminal_runtimes, 1, true)
             }
             _ => {}
@@ -1005,6 +1035,8 @@ fn shifted_ascii_char(ch: char) -> Option<char> {
 #[cfg(test)]
 mod tests {
     use super::super::{app_for_mouse_test, numbered_lines_bytes};
+    #[cfg(unix)]
+    use super::super::{unique_temp_path, wait_for_file};
     use super::*;
     use crate::{events::AppEvent, workspace::Workspace};
     use ratatui::layout::Rect;
@@ -1251,6 +1283,175 @@ mod tests {
         assert_eq!(app.state.mode, Mode::Copy);
         assert_eq!(app.state.copy_mode, Some(copy_mode));
         assert_eq!(app.state.workspaces[0].tabs[0].layout.focused(), first_pane);
+    }
+
+    #[tokio::test]
+    async fn copy_mode_direct_focus_binding_moves_to_another_pane() {
+        let (mut app, first_pane, second_pane) = app_with_split_copy_screen(b"alpha\nbeta\n");
+        app.state.keybinds.focus_pane_right = crate::config::ActionKeybinds::direct("alt+l");
+        app.state.enter_copy_mode(&app.terminal_runtimes);
+        assert_eq!(
+            app.state.copy_mode.as_ref().expect("copy mode").pane_id,
+            first_pane
+        );
+
+        app.handle_key(TerminalKey::new(KeyCode::Char('l'), KeyModifiers::ALT))
+            .await;
+
+        assert_eq!(
+            app.state.workspaces[0].tabs[0].layout.focused(),
+            second_pane
+        );
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert!(app.state.copy_mode.is_some());
+    }
+
+    #[tokio::test]
+    async fn copy_mode_modified_enter_runs_its_direct_binding_instead_of_copying() {
+        let (mut app, first_pane, second_pane) = app_with_split_copy_screen(b"alpha\nbeta\n");
+        app.state.keybinds.focus_pane_right = crate::config::ActionKeybinds::direct("alt+enter");
+        app.state.enter_copy_mode(&app.terminal_runtimes);
+        assert_eq!(
+            app.state.copy_mode.as_ref().expect("copy mode").pane_id,
+            first_pane
+        );
+
+        app.handle_key(TerminalKey::new(KeyCode::Enter, KeyModifiers::ALT))
+            .await;
+
+        assert_eq!(
+            app.state.workspaces[0].tabs[0].layout.focused(),
+            second_pane
+        );
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert!(app.state.copy_mode.is_some());
+        assert!(app.event_rx.try_recv().is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn copy_mode_direct_alt_enter_splits_instead_of_copying() {
+        let (mut app, _) = app_with_copy_screen(b"alpha\nbeta\n");
+        app.state.default_shell = "/bin/sh".into();
+        app.state.keybinds.split_vertical = crate::config::ActionKeybinds::direct("alt+enter");
+        app.state.enter_copy_mode(&app.terminal_runtimes);
+
+        app.handle_key(TerminalKey::new(KeyCode::Enter, KeyModifiers::ALT))
+            .await;
+
+        assert_eq!(app.state.workspaces[0].tabs[0].panes.len(), 2);
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert!(app.state.copy_mode.is_none());
+        assert!(app.event_rx.try_recv().is_err());
+
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn copy_mode_direct_custom_command_runs_and_cancels_copy_mode() {
+        let (mut app, _) = app_with_copy_screen(b"alpha\nbeta\n");
+        let output_path = unique_temp_path("copy-mode-direct-command");
+        app.state.keybinds.custom_commands = vec![crate::config::CustomCommandKeybind {
+            bindings: crate::config::ActionKeybinds::direct("ctrl+alt+g"),
+            label: "ctrl+alt+g".into(),
+            command: format!("printf direct > '{}'", output_path.display()),
+            action: crate::config::CustomCommandAction::Shell,
+            description: None,
+            width: None,
+            height: None,
+        }];
+        app.state.enter_copy_mode(&app.terminal_runtimes);
+
+        app.handle_key(TerminalKey::new(
+            KeyCode::Char('g'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        ))
+        .await;
+
+        assert_eq!(wait_for_file(&output_path), "direct");
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert!(app.state.copy_mode.is_none());
+        let _ = std::fs::remove_file(output_path);
+    }
+
+    #[tokio::test]
+    async fn copy_mode_direct_indexed_binding_switches_tabs() {
+        let (mut app, source_pane) = app_with_copy_screen(b"alpha\nbeta\n");
+        app.state.workspaces[0].test_add_tab(Some("second"));
+        app.state.workspaces[0].switch_tab(0);
+        let config: crate::config::Config =
+            toml::from_str("[keys]\nswitch_tab = \"ctrl+1..9\"\n").expect("key config");
+        app.state.keybinds.switch_tab = config.keybinds().switch_tab;
+        app.state.enter_copy_mode(&app.terminal_runtimes);
+        assert_eq!(
+            app.state.copy_mode.as_ref().expect("copy mode").pane_id,
+            source_pane
+        );
+
+        app.handle_key(TerminalKey::new(KeyCode::Char('2'), KeyModifiers::CONTROL))
+            .await;
+
+        assert_eq!(app.state.workspaces[0].active_tab, 1);
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert!(app.state.copy_mode.is_some());
+    }
+
+    #[tokio::test]
+    async fn copy_mode_search_prompt_keeps_priority_over_direct_bindings() {
+        let (mut app, first_pane, _) = app_with_split_copy_screen(b"alpha\nbeta\n");
+        app.state.keybinds.focus_pane_right = crate::config::ActionKeybinds::direct("alt+l");
+        app.state.enter_copy_mode(&app.terminal_runtimes);
+        app.handle_key(TerminalKey::new(KeyCode::Char('/'), KeyModifiers::empty()))
+            .await;
+
+        app.handle_key(TerminalKey::new(KeyCode::Char('l'), KeyModifiers::ALT))
+            .await;
+
+        assert_eq!(app.state.workspaces[0].tabs[0].layout.focused(), first_pane);
+        assert_eq!(app.state.mode, Mode::Copy);
+        assert!(app
+            .state
+            .copy_mode
+            .as_ref()
+            .is_some_and(|copy_mode| copy_mode.search.prompt.is_some()));
+    }
+
+    #[tokio::test]
+    async fn copy_mode_unbound_modified_enter_is_not_bare_enter() {
+        let (mut app, _) = app_with_copy_screen(b"alpha\nbeta\n");
+        app.state.enter_copy_mode(&app.terminal_runtimes);
+
+        app.handle_key(TerminalKey::new(KeyCode::Enter, KeyModifiers::ALT))
+            .await;
+
+        assert_eq!(app.state.mode, Mode::Copy);
+        assert!(app.state.copy_mode.is_some());
+        assert!(app.event_rx.try_recv().is_err());
+
+        app.handle_key(TerminalKey::new(KeyCode::Enter, KeyModifiers::empty()))
+            .await;
+
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert!(app.state.copy_mode.is_none());
+    }
+
+    #[tokio::test]
+    async fn copy_mode_ctrl_page_binding_rejects_extra_modifiers() {
+        let bytes = numbered_lines_bytes(64);
+        let (mut app, pane_id) = app_with_copy_scrollback(&bytes);
+        app.state.enter_copy_mode(&app.terminal_runtimes);
+
+        app.handle_key(TerminalKey::new(
+            KeyCode::Char('b'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        ))
+        .await;
+
+        assert_eq!(app.state.mode, Mode::Copy);
+        assert_eq!(copy_mode_offset_from_bottom(&app, pane_id), 0);
     }
 
     #[tokio::test]

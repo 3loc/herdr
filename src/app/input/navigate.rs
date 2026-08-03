@@ -104,22 +104,30 @@ impl App {
     }
 
     fn execute_prefix_key_action(&mut self, action: NavigateAction) {
+        self.execute_copy_mode_aware_action(action, ActionContext::Prefix);
+    }
+
+    pub(super) fn execute_copy_mode_direct_action(&mut self, action: NavigateAction) {
+        self.execute_copy_mode_aware_action(action, ActionContext::Direct);
+    }
+
+    fn execute_copy_mode_aware_action(&mut self, action: NavigateAction, context: ActionContext) {
         if action == NavigateAction::EditScrollback {
             let previous_mode = self.state.mode;
             self.cancel_copy_mode_if_active();
             self.launch_focused_scrollback_editor();
-            finish_action_context(&mut self.state, ActionContext::Prefix, previous_mode);
+            finish_action_context(&mut self.state, context, previous_mode);
         } else if action == NavigateAction::CopyMode {
             self.cancel_copy_mode_if_active();
-            self.execute_tui_navigate_action(action, ActionContext::Prefix);
-        } else if copy_mode_survives_prefix_action(action) {
-            self.execute_tui_navigate_action(action, ActionContext::Prefix);
+            self.execute_tui_navigate_action(action, context);
+        } else if copy_mode_survives_action(action) {
+            self.execute_tui_navigate_action(action, context);
             if self.state.copy_mode.is_some() {
                 self.state.sync_copy_mode_with_focus();
             }
         } else {
             self.cancel_copy_mode_if_active();
-            self.execute_tui_navigate_action(action, ActionContext::Prefix);
+            self.execute_tui_navigate_action(action, context);
         }
         self.selection_autoscroll_deadline = None;
     }
@@ -1378,7 +1386,7 @@ pub(crate) enum NavigateAction {
     OpenNavigator,
 }
 
-fn copy_mode_survives_prefix_action(action: NavigateAction) -> bool {
+fn copy_mode_survives_action(action: NavigateAction) -> bool {
     matches!(
         action,
         NavigateAction::SwitchWorkspace(_)
