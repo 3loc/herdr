@@ -5,7 +5,6 @@ import { cp, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/prom
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SOURCE_CHECKOUT = "/home/can/Projects/herdr";
 const DEFAULT_BASE = "master";
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 const EXTENSION_NAME = "herdr-worktree";
@@ -34,12 +33,12 @@ export default function (pi: ExtensionAPI) {
     name: "herdr_start_worktree",
     label: "Start Herdr Worktree",
     description:
-      "Create a Herdr-linked git worktree from the Herdr master checkout, continue the active pi session in it, " +
+      "Create a Herdr-linked git worktree from the active pi session's checkout, continue the session in it, " +
       "start pi in the new Herdr pane, then shut down and clean up the old pane.",
     promptSnippet: "Create a Herdr worktree workspace and continue the active pi session in it",
     promptGuidelines: [
       "Use herdr_start_worktree when work in the Herdr repo should continue in a fresh git worktree.",
-      "herdr_start_worktree creates the checkout from /home/can/Projects/herdr on master by default.",
+      "herdr_start_worktree creates the worktree from the active pi session's checkout on master by default.",
       "Prefer passing a clear branch name such as issue/123-short-slug when the work relates to an issue.",
       "After herdr_start_worktree succeeds, the current pi process will shut down and the old Herdr pane will close.",
     ],
@@ -77,7 +76,6 @@ export default function (pi: ExtensionAPI) {
         branch: cleanOptional(params.branch),
         base: cleanOptional(params.base) ?? DEFAULT_BASE,
         label: cleanOptional(params.label),
-        sourceCheckout: SOURCE_CHECKOUT,
         closeOldPane: params.closeOldPane ?? true,
         copyExtension: params.copyExtension ?? true,
       });
@@ -86,7 +84,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerCommand("herdr-worktree-start", {
     description:
-      "Create a Herdr worktree from master, continue this pi session in it, and clean up the old pane",
+      "Create a Herdr worktree from this checkout's master, continue this pi session in it, and clean up the old pane",
     handler: async (args, ctx) => {
       await ctx.waitForIdle();
       try {
@@ -121,7 +119,7 @@ async function startHerdrWorktree(
     throw new Error("Current pi session is not persisted, so it cannot be continued in a worktree");
   }
 
-  const sourceCheckout = await canonicalDirectory(options.sourceCheckout || SOURCE_CHECKOUT);
+  const sourceCheckout = await canonicalDirectory(options.sourceCheckout ?? ctx.cwd);
   ctx.ui.setStatus("herdr-worktree", "creating worktree");
 
   let newSessionFile: string | undefined;
@@ -342,7 +340,6 @@ function parseCommandArgs(args: string): StartOptions {
   const tokens = tokenize(args);
   const options: StartOptions = {
     base: DEFAULT_BASE,
-    sourceCheckout: SOURCE_CHECKOUT,
     closeOldPane: true,
     copyExtension: true,
   };
@@ -363,7 +360,7 @@ function parseCommandArgs(args: string): StartOptions {
   options.branch = cleanOptional(options.branch);
   options.base = cleanOptional(options.base) ?? DEFAULT_BASE;
   options.label = cleanOptional(options.label);
-  options.sourceCheckout = cleanOptional(options.sourceCheckout) ?? SOURCE_CHECKOUT;
+  options.sourceCheckout = cleanOptional(options.sourceCheckout);
   return options;
 }
 
