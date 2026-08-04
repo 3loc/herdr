@@ -4072,6 +4072,12 @@ impl HeadlessServer {
                         } else {
                             crate::kitty_graphics::HostCellSize::default()
                         };
+                    let preserved_scroll = (!is_foreground).then_some((
+                        self.app.state.workspace_scroll,
+                        self.app.state.agent_panel_scroll,
+                        self.app.state.tab_scroll,
+                        self.app.state.mobile_switcher_scroll,
+                    ));
                     let (buffer, cursor) =
                         crate::server::render_stream::render_virtual_with_runtime_registry(
                             &mut self.app.state,
@@ -4080,6 +4086,12 @@ impl HeadlessServer {
                             is_foreground,
                             render_cell_size,
                         );
+                    if let Some((workspace, agent_panel, tab, mobile_switcher)) = preserved_scroll {
+                        self.app.state.workspace_scroll = workspace;
+                        self.app.state.agent_panel_scroll = agent_panel;
+                        self.app.state.tab_scroll = tab;
+                        self.app.state.mobile_switcher_scroll = mobile_switcher;
+                    }
                     crate::render_prof::duration_since(
                         "full_render.render_virtual",
                         render_started,
