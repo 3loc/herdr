@@ -4,6 +4,7 @@ use std::io::{self, Read};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 
+#[cfg(unix)]
 use interprocess::local_socket::traits::Stream as _;
 
 pub(crate) type LocalListener = interprocess::local_socket::Listener;
@@ -130,22 +131,10 @@ pub(crate) fn set_local_stream_polling(stream: &mut LocalStream, enabled: bool) 
     }
 }
 
-pub(crate) fn set_local_stream_nonblocking(
-    stream: &mut LocalStream,
-    enabled: bool,
-) -> io::Result<()> {
-    stream.set_nonblocking(enabled)
-}
-
-pub(crate) fn local_stream_zero_write_is_pending() -> bool {
-    cfg!(windows)
-}
-
-pub(crate) fn local_stream_write_chunk_len(remaining: usize) -> usize {
-    if cfg!(windows) {
-        remaining.min(4 * 1024)
-    } else {
-        remaining
+#[cfg(unix)]
+pub(crate) fn shutdown_local_stream_write(stream: &LocalStream) -> io::Result<()> {
+    match stream {
+        LocalStream::UdSocket(stream) => stream.inner().shutdown(std::net::Shutdown::Write),
     }
 }
 
@@ -184,7 +173,10 @@ pub(crate) fn poll_local_stream_read(
     buf: &mut [u8],
 ) -> io::Result<LocalStreamRead> {
     match poll_local_stream_read_count(stream, buf)? {
-        LocalStreamReadCount::Data(_) => Ok(LocalStreamRead::Data),
+        LocalStreamReadCount::Data(read) => {
+            let _ = read;
+            Ok(LocalStreamRead::Data)
+        }
         LocalStreamReadCount::Pending => Ok(LocalStreamRead::Pending),
         LocalStreamReadCount::Closed => Ok(LocalStreamRead::Closed),
     }

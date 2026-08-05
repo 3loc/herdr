@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use interprocess::local_socket::traits::Listener as _;
+#[cfg(windows)]
+use interprocess::local_socket::traits::Stream as _;
 use interprocess::local_socket::ListenerNonblockingMode;
 use interprocess::TryClone as _;
 use serde::Deserialize;
@@ -19,6 +21,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 const BRIDGE_ACCEPT_POLL: Duration = Duration::from_millis(50);
+#[cfg(windows)]
 const BRIDGE_IO_POLL: Duration = Duration::from_millis(1);
 const BRIDGE_SOCKET_PERMISSION_MODE: u32 = 0o600;
 const REMOTE_SERVER_SHUTDOWN_CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
@@ -1714,9 +1717,12 @@ impl SshStdioBridge {
 impl Drop for SshStdioBridge {
     fn drop(&mut self) {
         self.should_stop.store(true, Ordering::Release);
+        #[cfg(unix)]
+        let _ = crate::ipc::remove_socket_file_if_owned(&self.local_socket, &self.socket_identity);
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+        #[cfg(windows)]
         let _ = crate::ipc::remove_socket_file_if_owned(&self.local_socket, &self.socket_identity);
     }
 }
@@ -1777,8 +1783,64 @@ fn write_managed_ssh_config() -> io::Result<ManagedSshConfig> {
     })
 }
 
+#[cfg(unix)]
 fn bridge_connection(
-    mut stream: crate::ipc::LocalStream,
+    stream: crate::ipc::LocalStream,
+    target: &str,
+    remote_herdr: &RemoteHerdr,
+    session_name: &str,
+    ssh_options: Option<&ManagedSshOptions>,
+    _bridge_stop: &Arc<AtomicBool>,
+) -> io::Result<()> {
+    let mut command = Command::new("ssh");
+    apply_managed_ssh_options(&mut command, ssh_options);
+    command
+        .arg("-T")
+        .arg(target)
+        .arg(remote_bridge_command(remote_herdr, session_name))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+
+    let mut child = command
+        .spawn()
+        .map_err(|err| io::Error::new(err.kind(), format!("failed to start ssh bridge: {err}")))?;
+    let mut child_stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "ssh bridge stdin missing"))?;
+    let mut child_stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "ssh bridge stdout missing"))?;
+    let mut stream_to_child = stream.try_clone()?;
+    let mut child_to_stream = stream;
+
+    let upload = thread::spawn(move || {
+        let _ = copy_flush(&mut stream_to_child, &mut child_stdin);
+    });
+    let download = thread::spawn(move || {
+        let _ = copy_flush(&mut child_stdout, &mut child_to_stream);
+        let _ = crate::ipc::shutdown_local_stream_write(&child_to_stream);
+    });
+
+    let status = child.wait()?;
+    let _ = upload.join();
+    let _ = download.join();
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::ConnectionAborted,
+            format!("ssh bridge exited with {status}"),
+        ))
+    }
+}
+
+#[cfg(windows)]
+fn bridge_connection(
+    stream: crate::ipc::LocalStream,
     target: &str,
     remote_herdr: &RemoteHerdr,
     session_name: &str,
@@ -1814,7 +1876,7 @@ fn bridge_connection(
             return Err(err);
         }
     };
-    if let Err(err) = crate::ipc::set_local_stream_nonblocking(&mut stream, true) {
+    if let Err(err) = stream.set_nonblocking(true) {
         let _ = child.kill();
         let _ = child.wait();
         return Err(err);
@@ -1926,12 +1988,33 @@ fn bridge_connection(
     }
 }
 
+#[cfg(unix)]
+fn copy_flush<R: io::Read, W: io::Write>(reader: &mut R, writer: &mut W) -> io::Result<u64> {
+    let mut buffer = [0_u8; 16 * 1024];
+    let mut total = 0;
+
+    loop {
+        let bytes_read = match reader.read(&mut buffer) {
+            Ok(0) => return Ok(total),
+            Ok(bytes_read) => bytes_read,
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+            Err(err) => return Err(err),
+        };
+
+        writer.write_all(&buffer[..bytes_read])?;
+        writer.flush()?;
+        total += bytes_read as u64;
+    }
+}
+
+#[cfg(windows)]
 fn terminate_bridge_child(mut child: std::process::Child, message: &'static str) -> io::Result<()> {
     let _ = child.kill();
     let _ = child.wait();
     Err(io::Error::new(io::ErrorKind::BrokenPipe, message))
 }
 
+#[cfg(windows)]
 fn copy_reader_to_local_stream<R: io::Read>(
     reader: &mut R,
     stream: &mut crate::ipc::LocalStream,
@@ -1953,12 +2036,9 @@ fn copy_reader_to_local_stream<R: io::Read>(
             if connection_stop.load(Ordering::Acquire) || bridge_stop.load(Ordering::Acquire) {
                 return Ok(total);
             }
-            let chunk_len = crate::ipc::local_stream_write_chunk_len(read - written);
+            let chunk_len = (read - written).min(4 * 1024);
             match stream.write(&buffer[written..written + chunk_len]) {
-                Ok(0) if crate::ipc::local_stream_zero_write_is_pending() => {
-                    thread::sleep(BRIDGE_IO_POLL);
-                }
-                Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+                Ok(0) => thread::sleep(BRIDGE_IO_POLL),
                 Ok(count) => written += count,
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
@@ -1972,6 +2052,7 @@ fn copy_reader_to_local_stream<R: io::Read>(
     }
 }
 
+#[cfg(windows)]
 fn copy_local_stream_to_writer<W: io::Write>(
     mut stream: crate::ipc::LocalStream,
     writer: &mut W,
