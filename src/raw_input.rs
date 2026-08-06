@@ -580,6 +580,13 @@ pub(crate) fn events_require_host_surface_redraw(
 }
 
 #[cfg(any(not(windows), test))]
+pub(crate) fn events_require_host_terminal_appearance_query(events: &[RawInputEvent]) -> bool {
+    events
+        .iter()
+        .any(|event| matches!(event, RawInputEvent::OuterFocusGained))
+}
+
+#[cfg(any(not(windows), test))]
 pub(crate) fn events_require_host_terminal_theme_query(events: &[RawInputEvent]) -> bool {
     events
         .iter()
@@ -1542,6 +1549,20 @@ mod tests {
 
         let events = parse_raw_input_bytes_sync(b"\x1b[O");
         assert!(!events_require_host_surface_redraw(&events, true));
+    }
+
+    #[test]
+    fn outer_focus_gained_requests_host_appearance_query() {
+        let gained = parse_raw_input_bytes_sync(b"\x1b[I");
+        let lost = parse_raw_input_bytes_sync(b"\x1b[O");
+        let scheme_report = parse_raw_input_bytes_sync(b"\x1b[?997;1n");
+
+        assert!(events_require_host_terminal_appearance_query(&gained));
+        assert!(!events_require_host_terminal_appearance_query(&lost));
+        assert!(!events_require_host_terminal_appearance_query(
+            &scheme_report
+        ));
+        assert!(events_require_host_terminal_theme_query(&scheme_report));
     }
 
     #[test]
