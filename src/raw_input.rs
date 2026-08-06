@@ -172,6 +172,11 @@ impl RawInputFramer {
         self.byte_framer.enable_host_color_scheme_change_tracking();
     }
 
+    #[cfg(any(not(windows), test))]
+    pub(crate) fn enable_host_appearance_query_on_focus(&mut self) {
+        self.byte_framer.enable_host_appearance_query_on_focus();
+    }
+
     pub(crate) fn has_pending_input(&self) -> bool {
         self.byte_framer.has_pending_input()
     }
@@ -218,6 +223,7 @@ pub(crate) struct RawInputByteFramer {
     host_cell_size_replies_awaited: u16,
     held_pending_host_reply_esc: bool,
     host_color_scheme_change_tracking: bool,
+    host_appearance_query_on_focus: bool,
     split_coalesced_escape: bool,
 }
 
@@ -266,6 +272,13 @@ impl RawInputByteFramer {
 
     pub(crate) fn enable_host_color_scheme_change_tracking(&mut self) {
         self.host_color_scheme_change_tracking = true;
+    }
+
+    /// Arm the bounded host-reply window when focus gain will emit an appearance query.
+    /// If the write or reply fails, a lone Escape is delayed for only one extra flush.
+    #[cfg(any(not(windows), test))]
+    pub(crate) fn enable_host_appearance_query_on_focus(&mut self) {
+        self.host_appearance_query_on_focus = true;
     }
 
     pub(crate) fn has_pending_input(&self) -> bool {
@@ -522,8 +535,10 @@ impl RawInputByteFramer {
             } else if matches!(event, RawInputEvent::HostCellSizeReport { .. }) {
                 self.host_cell_size_replies_awaited =
                     self.host_cell_size_replies_awaited.saturating_sub(1);
-            } else if self.host_color_scheme_change_tracking
-                && matches!(event, RawInputEvent::HostColorSchemeChanged(_))
+            } else if (self.host_appearance_query_on_focus
+                && matches!(event, RawInputEvent::OuterFocusGained))
+                || (self.host_color_scheme_change_tracking
+                    && matches!(event, RawInputEvent::HostColorSchemeChanged(_)))
             {
                 self.host_color_query_sent();
             }
@@ -611,6 +626,8 @@ pub fn spawn_input_reader() -> mpsc::Receiver<RawInputEvent> {
         let mut framer = RawInputFramer::for_host_input();
         framer.host_color_query_sent();
         framer.enable_host_color_scheme_change_tracking();
+        #[cfg(not(windows))]
+        framer.enable_host_appearance_query_on_focus();
         let mut pending_palette = Vec::new();
 
         loop {
@@ -2881,6 +2898,51 @@ mod tests {
         framer.enable_host_color_scheme_change_tracking();
 
         assert!(framer.push(b"\x1b").is_empty());
+        assert_eq!(framer.flush_timeout(), vec![b"\x1b".to_vec()]);
+    }
+
+    #[test]
+    fn opted_in_byte_framer_rearms_after_outer_focus_gained() {
+        let mut framer = RawInputByteFramer::default();
+        framer.enable_host_color_scheme_change_tracking();
+        framer.enable_host_appearance_query_on_focus();
+
+        assert_eq!(framer.push(b"\x1b[I"), vec![b"\x1b[I".to_vec()]);
+        assert!(framer.push(b"\x1b").is_empty());
+        assert!(framer.flush_timeout().is_empty());
+        assert_eq!(
+            framer.push(b"[?997;2n"),
+            vec![GHOSTTY_COLOR_SCHEME_LIGHT_REPORT.to_vec()]
+        );
+    }
+
+    #[test]
+    fn disabled_focus_query_does_not_rearm_byte_framer() {
+        let mut framer = RawInputByteFramer::default();
+        framer.enable_host_color_scheme_change_tracking();
+
+        assert_eq!(framer.push(b"\x1b[I"), vec![b"\x1b[I".to_vec()]);
+        assert!(framer.push(b"\x1b").is_empty());
+        assert_eq!(framer.flush_timeout(), vec![b"\x1b".to_vec()]);
+    }
+
+    #[test]
+    fn focus_query_policy_does_not_delay_plain_escape_without_focus() {
+        let mut framer = RawInputByteFramer::default();
+        framer.enable_host_appearance_query_on_focus();
+
+        assert!(framer.push(b"\x1b").is_empty());
+        assert_eq!(framer.flush_timeout(), vec![b"\x1b".to_vec()]);
+    }
+
+    #[test]
+    fn focus_query_without_reply_holds_escape_for_only_one_flush() {
+        let mut framer = RawInputByteFramer::default();
+        framer.enable_host_appearance_query_on_focus();
+
+        assert_eq!(framer.push(b"\x1b[I"), vec![b"\x1b[I".to_vec()]);
+        assert!(framer.push(b"\x1b").is_empty());
+        assert!(framer.flush_timeout().is_empty());
         assert_eq!(framer.flush_timeout(), vec![b"\x1b".to_vec()]);
     }
 
