@@ -1673,8 +1673,8 @@ impl AppState {
         inner: Rect,
         mouse: MouseEvent,
     ) -> Option<crate::input::mouse::Position> {
-        let column = mouse.column.checked_sub(inner.x)?;
-        let row = mouse.row.checked_sub(inner.y)?;
+        let column = mouse.column.saturating_sub(inner.x);
+        let row = mouse.row.saturating_sub(inner.y);
         let cell = crate::input::mouse::Position::Cell { column, row };
         let Some(host) = self.host_mouse_pixels else {
             return Some(cell);
@@ -2165,7 +2165,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn configured_right_click_passthrough_forwards_full_gesture_to_pane() {
+    async fn configured_right_click_passthrough_forwards_gesture_outside_pane() {
         let mut app = app_for_mouse_test();
         let mut ws = Workspace::test_new("test");
         let pane_id = ws.tabs[0].root_pane;
@@ -2196,11 +2196,11 @@ mod tests {
         });
         app.handle_mouse(MouseEvent {
             modifiers: KeyModifiers::CONTROL,
-            ..mouse(MouseEventKind::Drag(MouseButton::Right), col + 1, row + 1)
+            ..mouse(MouseEventKind::Drag(MouseButton::Right), 0, 0)
         });
         app.handle_mouse(MouseEvent {
             modifiers: KeyModifiers::CONTROL,
-            ..mouse(MouseEventKind::Up(MouseButton::Right), col + 1, row + 1)
+            ..mouse(MouseEventKind::Up(MouseButton::Right), 0, 0)
         });
 
         assert_eq!(app.state.mode, Mode::Terminal);
@@ -2212,11 +2212,11 @@ mod tests {
         );
         assert_eq!(
             input_rx.try_recv().expect("forwarded right mouse drag"),
-            Bytes::from_static(b"\x1b[<34;4;5M")
+            Bytes::from_static(b"\x1b[<34;1;1M")
         );
         assert_eq!(
             input_rx.try_recv().expect("forwarded right mouse up"),
-            Bytes::from_static(b"\x1b[<2;4;5m")
+            Bytes::from_static(b"\x1b[<2;1;1m")
         );
         assert!(input_rx.try_recv().is_err());
     }
