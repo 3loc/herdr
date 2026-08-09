@@ -2179,20 +2179,7 @@ mod tests {
             let RawInputEvent::Key(key) = event else {
                 panic!("fixture did not produce a key: {}", case.family);
             };
-            assert_eq!(key.code, case.code, "{} code", case.family);
-            assert_eq!(key.modifiers, case.modifiers, "{} modifiers", case.family);
-            assert_eq!(key.kind, case.kind, "{} kind", case.family);
-            assert_eq!(key.repeat_count, 1, "{} repeat count", case.family);
-            assert_eq!(
-                key.shifted_codepoint, case.shifted_codepoint,
-                "{} shifted codepoint",
-                case.family
-            );
-            assert_eq!(
-                key.base_layout_codepoint, case.base_layout_codepoint,
-                "{} base layout codepoint",
-                case.family
-            );
+            case.assert_key_semantics(&key);
             assert_eq!(
                 key.generated_text, case.generated_text,
                 "{} generated text",

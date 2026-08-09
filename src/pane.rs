@@ -2729,8 +2729,7 @@ impl PaneRuntime {
     }
 
     pub fn encode_terminal_key(&self, key: crate::input::TerminalKey) -> Vec<u8> {
-        self.terminal
-            .encode_terminal_key(key, self.keyboard_protocol())
+        self.terminal.encode_terminal_key(key)
     }
 
     pub async fn send_bytes(&self, bytes: Bytes) -> Result<(), mpsc::error::SendError<Bytes>> {

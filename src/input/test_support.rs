@@ -14,6 +14,25 @@ pub(crate) struct KeyboardCorpusCase<'a> {
     pub expected_pane_hex: &'a str,
 }
 
+impl KeyboardCorpusCase<'_> {
+    pub fn assert_key_semantics(&self, key: &crate::input::TerminalKey) {
+        assert_eq!(key.code, self.code, "{} code", self.family);
+        assert_eq!(key.modifiers, self.modifiers, "{} modifiers", self.family);
+        assert_eq!(key.kind, self.kind, "{} kind", self.family);
+        assert_eq!(key.repeat_count, 1, "{} repeat count", self.family);
+        assert_eq!(
+            key.shifted_codepoint, self.shifted_codepoint,
+            "{} shifted codepoint",
+            self.family
+        );
+        assert_eq!(
+            key.base_layout_codepoint, self.base_layout_codepoint,
+            "{} base layout codepoint",
+            self.family
+        );
+    }
+}
+
 pub(crate) fn keyboard_corpus_cases(corpus: &str) -> Vec<KeyboardCorpusCase<'_>> {
     corpus
         .lines()

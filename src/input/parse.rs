@@ -1032,24 +1032,7 @@ mod tests {
             let parsed = parse_terminal_key_sequence(text)
                 .unwrap_or_else(|| panic!("fixture failed to parse: {}", case.family));
 
-            assert_eq!(parsed.code, case.code, "{} code", case.family);
-            assert_eq!(
-                parsed.modifiers, case.modifiers,
-                "{} modifiers",
-                case.family
-            );
-            assert_eq!(parsed.kind, case.kind, "{} kind", case.family);
-            assert_eq!(parsed.repeat_count, 1, "{} repeat count", case.family);
-            assert_eq!(
-                parsed.shifted_codepoint, case.shifted_codepoint,
-                "{} shifted codepoint",
-                case.family
-            );
-            assert_eq!(
-                parsed.base_layout_codepoint, case.base_layout_codepoint,
-                "{} base layout codepoint",
-                case.family
-            );
+            case.assert_key_semantics(&parsed);
         }
     }
 
