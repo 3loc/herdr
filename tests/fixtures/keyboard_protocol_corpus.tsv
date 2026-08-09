@@ -1,4 +1,4 @@
-# family	bytes_hex	code	modifiers	kind	shifted_codepoint	generated_text_hex	pane_profile	pane_bytes_hex
+# family	bytes_hex	code	modifiers	kind	shifted_codepoint	generated_text_hex	pane_profile	pane_bytes_hex	base_layout_codepoint(optional)
 legacy_ctrl_space	00	char: 	control	press		-	legacy	00
 legacy_ctrl_a	01	char:a	control	press		-	legacy	01
 legacy_ctrl_b	02	char:b	control	press		-	legacy	02
@@ -120,3 +120,5 @@ kitty_repeat_a_kitty_11	1b5b39373b313a3275	char:a	-	repeat		-	kitty_11	1b5b39373
 kitty_super_a_kitty_31	1b5b39373b3975	char:a	super	press		-	kitty_31	1b5b39373b393a3175
 kitty_hyper_a_kitty_31	1b5b39373b313775	char:a	hyper	press		-	kitty_31	1b5b39373b31373a3175
 kitty_meta_a_kitty_31	1b5b39373b333375	char:a	meta	press		-	kitty_31	1b5b39373b33333a3175
+kitty_full_alternates_kitty_13	1b5b39373a36353a3131333b3275	char:a	shift	press	65	-	kitty_13	1b5b39373a36353a3131333b3275	113
+kitty_full_alternates_associated_text	1b5b39373a36353a3131333b3b36353a37363975	char:a	shift	press	65	41cc81	legacy	41cc81	113

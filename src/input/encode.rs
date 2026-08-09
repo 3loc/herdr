@@ -218,26 +218,27 @@ fn try_encode_csi_u(key: &TerminalKey, flags: u16) -> Option<Vec<u8>> {
         _ => {}
     }
 
-    let (codepoint, alternate_shifted) = match key.code {
+    let (codepoint, alternate_shifted, alternate_base_layout) = match key.code {
         KeyCode::Char(c) => {
             let base = canonical_kitty_char(c, mods);
             let shifted = alternate_shifted_codepoint(key, flags);
-            (base as u32, shifted)
+            let base_layout = alternate_base_layout_codepoint(key, flags);
+            (base as u32, shifted, base_layout)
         }
-        KeyCode::Enter => (13, None),
-        KeyCode::Tab => (9, None),
-        KeyCode::Backspace => (127, None),
-        KeyCode::Esc => (27, None),
-        KeyCode::Left => (57417, None),
-        KeyCode::Right => (57418, None),
-        KeyCode::Up => (57419, None),
-        KeyCode::Down => (57420, None),
-        KeyCode::PageUp => (57421, None),
-        KeyCode::PageDown => (57422, None),
-        KeyCode::Home => (57423, None),
-        KeyCode::End => (57424, None),
-        KeyCode::Insert => (57425, None),
-        KeyCode::Delete => (57426, None),
+        KeyCode::Enter => (13, None, None),
+        KeyCode::Tab => (9, None, None),
+        KeyCode::Backspace => (127, None, None),
+        KeyCode::Esc => (27, None, None),
+        KeyCode::Left => (57417, None, None),
+        KeyCode::Right => (57418, None, None),
+        KeyCode::Up => (57419, None, None),
+        KeyCode::Down => (57420, None, None),
+        KeyCode::PageUp => (57421, None, None),
+        KeyCode::PageDown => (57422, None, None),
+        KeyCode::Home => (57423, None, None),
+        KeyCode::End => (57424, None, None),
+        KeyCode::Insert => (57425, None, None),
+        KeyCode::Delete => (57426, None, None),
         _ => return None, // fall back to legacy for unhandled keys
     };
 
@@ -246,8 +247,14 @@ fn try_encode_csi_u(key: &TerminalKey, flags: u16) -> Option<Vec<u8>> {
     let mut sequence = String::with_capacity(32);
     sequence.push_str("\x1b[");
     write!(&mut sequence, "{codepoint}").ok()?;
-    if let Some(shifted) = alternate_shifted {
-        write!(&mut sequence, ":{shifted}").ok()?;
+    if alternate_shifted.is_some() || alternate_base_layout.is_some() {
+        sequence.push(':');
+        if let Some(shifted) = alternate_shifted {
+            write!(&mut sequence, "{shifted}").ok()?;
+        }
+        if let Some(base_layout) = alternate_base_layout {
+            write!(&mut sequence, ":{base_layout}").ok()?;
+        }
     }
     write!(&mut sequence, ";{modifier}").ok()?;
     if let Some(event) = event_suffix {
@@ -464,6 +471,12 @@ fn alternate_shifted_codepoint(key: &TerminalKey, flags: u16) -> Option<u32> {
         }
         _ => None,
     }
+}
+
+fn alternate_base_layout_codepoint(key: &TerminalKey, flags: u16) -> Option<u32> {
+    (flags & KITTY_FLAG_REPORT_ALTERNATE_KEYS != 0)
+        .then_some(key.base_layout_codepoint)
+        .flatten()
 }
 
 fn kitty_event_suffix(key: &TerminalKey, flags: u16) -> Option<u8> {

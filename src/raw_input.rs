@@ -181,6 +181,11 @@ impl RawInputFramer {
         self.byte_framer.has_pending_input()
     }
 
+    #[cfg(any(windows, test))]
+    pub(crate) fn requires_raw_continuation(&self) -> bool {
+        self.byte_framer.has_pending_input() || self.byte_framer.discard_until.is_some()
+    }
+
     pub(crate) fn has_pending_incomplete_mouse_sequence(&self) -> bool {
         self.byte_framer.has_pending_incomplete_mouse_sequence()
     }
@@ -232,6 +237,9 @@ const HOST_COLOR_QUERY_REPLIES: u16 = 258;
 #[cfg(any(unix, test))]
 const HOST_CELL_SIZE_QUERY_REPLIES: u16 = 1;
 const MAX_ORPHANED_SGR_MOUSE_TAIL_BYTES: usize = 32;
+const MAX_CSI_SEQUENCE_BYTES: usize = 4096;
+const MAX_LEGACY_ESCAPE_PREFIXES: usize = 64;
+const CSI_FINAL_BYTES: &[u8] = b"@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
 
 impl RawInputByteFramer {
     pub(crate) fn for_host_input() -> Self {
@@ -313,7 +321,10 @@ impl RawInputByteFramer {
         let mut chunks = self.drain_available_chunks();
 
         if let Some(family) = self.discard_until {
-            if family == ControlStringFamily::HostReplyCsi {
+            if matches!(
+                family,
+                ControlStringFamily::CsiTail | ControlStringFamily::OversizedCsi
+            ) {
                 return chunks;
             }
             if family == ControlStringFamily::OrphanedSgrMouseTail {
@@ -408,7 +419,7 @@ impl RawInputByteFramer {
             );
             self.host_cell_size_replies_awaited = 0;
             self.held_pending_host_reply_esc = false;
-            self.discard_until = Some(ControlStringFamily::HostReplyCsi);
+            self.discard_until = Some(ControlStringFamily::CsiTail);
             self.discarded_tail_bytes = 0;
             self.buffer.clear();
             return chunks;
@@ -429,7 +440,7 @@ impl RawInputByteFramer {
             );
             self.host_appearance_reply_awaited = false;
             self.held_pending_host_reply_esc = false;
-            self.discard_until = Some(ControlStringFamily::HostReplyCsi);
+            self.discard_until = Some(ControlStringFamily::CsiTail);
             self.discarded_tail_bytes = 0;
             self.buffer.clear();
             return chunks;
@@ -496,6 +507,19 @@ impl RawInputByteFramer {
         let mut chunks = Vec::new();
 
         loop {
+            let escape_count = self.buffer.iter().take_while(|byte| **byte == ESC).count();
+            if self.discard_until.is_none() && escape_count > MAX_LEGACY_ESCAPE_PREFIXES {
+                let excess = escape_count - MAX_LEGACY_ESCAPE_PREFIXES;
+                tracing::warn!(excess, "splitting excessive legacy escape prefixes");
+                chunks.extend((0..excess).map(|_| vec![ESC]));
+                self.buffer.drain(..excess);
+                continue;
+            }
+
+            if self.discard_oversized_csi_prefix() {
+                continue;
+            }
+
             if self.lone_escape_recently_flushed {
                 if starts_with_incomplete_orphaned_sgr_mouse_tail(&self.buffer) {
                     break;
@@ -508,11 +532,17 @@ impl RawInputByteFramer {
             }
 
             if let Some(family) = self.discard_until {
-                if family == ControlStringFamily::HostReplyCsi {
-                    if discard_host_reply_csi_tail(&mut self.buffer, &mut self.discarded_tail_bytes)
-                    {
+                if family == ControlStringFamily::CsiTail {
+                    if discard_csi_tail(&mut self.buffer, &mut self.discarded_tail_bytes) {
                         self.discard_until = None;
                         self.discarded_tail_bytes = 0;
+                        continue;
+                    }
+                    break;
+                }
+                if family == ControlStringFamily::OversizedCsi {
+                    if discard_oversized_csi_tail(&mut self.buffer) {
+                        self.discard_until = None;
                         continue;
                     }
                     break;
@@ -574,6 +604,36 @@ impl RawInputByteFramer {
 
         chunks
     }
+
+    fn discard_oversized_csi_prefix(&mut self) -> bool {
+        if self.discard_until.is_some() {
+            return false;
+        }
+        let Some(offset) = csi_sequence_offset(&self.buffer) else {
+            return false;
+        };
+        let csi = &self.buffer[offset..];
+
+        match find_csi_final(csi, CSI_FINAL_BYTES) {
+            Some(len) if len > MAX_CSI_SEQUENCE_BYTES => {
+                let consumed = offset + len;
+                tracing::warn!(len = consumed, "discarding oversized CSI input sequence");
+                self.buffer.drain(..consumed);
+                true
+            }
+            None if csi.len() > MAX_CSI_SEQUENCE_BYTES => {
+                tracing::warn!(
+                    len = self.buffer.len(),
+                    "discarding oversized incomplete CSI input sequence"
+                );
+                self.buffer.clear();
+                self.discard_until = Some(ControlStringFamily::OversizedCsi);
+                self.discarded_tail_bytes = 0;
+                true
+            }
+            Some(_) | None => false,
+        }
+    }
 }
 
 const MAX_DISCARDED_CONTROL_TAIL_BYTES: usize = 128;
@@ -602,7 +662,7 @@ fn plausible_control_string_tail(family: ControlStringFamily, buffer: &[u8]) -> 
                 )
         }),
         ControlStringFamily::StTerminated => buffer.last() == Some(&ESC),
-        ControlStringFamily::HostReplyCsi => false,
+        ControlStringFamily::CsiTail | ControlStringFamily::OversizedCsi => false,
         ControlStringFamily::OrphanedSgrMouseTail => buffer
             .iter()
             .all(|byte| byte.is_ascii_digit() || matches!(*byte, b';' | b'M' | b'm')),
@@ -901,7 +961,8 @@ fn extract_one_event(buffer: &[u8]) -> Option<(RawInputEvent, usize)> {
 enum ControlStringFamily {
     Osc,
     StTerminated,
-    HostReplyCsi,
+    CsiTail,
+    OversizedCsi,
     OrphanedSgrMouseTail,
 }
 
@@ -1022,6 +1083,11 @@ fn utf8_char_width(first: u8) -> Option<usize> {
     }
 }
 
+fn csi_sequence_offset(buffer: &[u8]) -> Option<usize> {
+    let escape_count = buffer.iter().take_while(|byte| **byte == ESC).count();
+    (escape_count > 0 && buffer.get(escape_count) == Some(&b'[')).then(|| escape_count - 1)
+}
+
 fn complete_escape_sequence_len(buffer: &[u8]) -> Option<usize> {
     if buffer.len() == 1 {
         return None;
@@ -1043,8 +1109,18 @@ fn complete_escape_sequence_len(buffer: &[u8]) -> Option<usize> {
         return Some(1);
     }
 
-    if buffer.starts_with(b"\x1b\x1b") {
-        return complete_escape_sequence_len(&buffer[1..]).map(|len| len + 1);
+    let escape_count = buffer.iter().take_while(|byte| **byte == ESC).count();
+    if escape_count > MAX_LEGACY_ESCAPE_PREFIXES {
+        return Some(1);
+    }
+    let escape_offset = escape_count.saturating_sub(1);
+    let sequence = &buffer[escape_offset..];
+    complete_single_escape_sequence_len(sequence).map(|len| escape_offset + len)
+}
+
+fn complete_single_escape_sequence_len(buffer: &[u8]) -> Option<usize> {
+    if buffer.len() == 1 {
+        return None;
     }
 
     if buffer.starts_with(b"\x1b[") {
@@ -1054,10 +1130,7 @@ fn complete_escape_sequence_len(buffer: &[u8]) -> Option<usize> {
         if buffer.starts_with(b"\x1b[M") {
             return (buffer.len() >= 6).then_some(6);
         }
-        return find_csi_final(
-            buffer,
-            b"@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~",
-        );
+        return find_csi_final(buffer, CSI_FINAL_BYTES);
     }
 
     if let Some(control) = control_string(buffer) {
@@ -1136,7 +1209,22 @@ fn discard_or_buffer_orphaned_sgr_mouse_tail(
     }
 }
 
-fn discard_host_reply_csi_tail(buffer: &mut Vec<u8>, discarded_tail_bytes: &mut usize) -> bool {
+fn discard_oversized_csi_tail(buffer: &mut Vec<u8>) -> bool {
+    for (index, byte) in buffer.iter().copied().enumerate() {
+        match byte {
+            0x20..=0x3f => {}
+            _ => {
+                buffer.drain(..=index);
+                return true;
+            }
+        }
+    }
+
+    buffer.clear();
+    false
+}
+
+fn discard_csi_tail(buffer: &mut Vec<u8>, discarded_tail_bytes: &mut usize) -> bool {
     let remaining = MAX_DISCARDED_CONTROL_TAIL_BYTES.saturating_sub(*discarded_tail_bytes);
     let inspected = buffer.len().min(remaining);
 
@@ -1213,7 +1301,7 @@ fn control_string_terminator_for_family(
     match family {
         ControlStringFamily::Osc => osc_string_terminator(buffer),
         ControlStringFamily::StTerminated => st_string_terminator(buffer),
-        ControlStringFamily::HostReplyCsi => None,
+        ControlStringFamily::CsiTail | ControlStringFamily::OversizedCsi => None,
         ControlStringFamily::OrphanedSgrMouseTail => buffer
             .iter()
             .position(|byte| matches!(*byte, b'M' | b'm'))
@@ -1946,6 +2034,11 @@ mod tests {
                 case.family
             );
             assert_eq!(
+                key.base_layout_codepoint, case.base_layout_codepoint,
+                "{} base layout codepoint",
+                case.family
+            );
+            assert_eq!(
                 key.generated_text, case.generated_text,
                 "{} generated text",
                 case.family
@@ -2309,6 +2402,71 @@ mod tests {
             KeyCode::Char('1'),
             KeyModifiers::SHIFT,
         );
+    }
+
+    #[test]
+    fn oversized_csi_input_is_discarded_without_losing_following_keys() {
+        let mut incomplete = RawInputByteFramer::default();
+        let mut oversized = b"\x1b[".to_vec();
+        oversized.extend(std::iter::repeat_n(b'1', MAX_CSI_SEQUENCE_BYTES));
+        assert!(incomplete.push(&oversized).is_empty());
+        assert!(!incomplete.has_pending_input());
+        assert!(incomplete
+            .push(&[b'2'; MAX_DISCARDED_CONTROL_TAIL_BYTES + 1])
+            .is_empty());
+        assert!(!incomplete.has_pending_input());
+        assert!(incomplete.push(b"u").is_empty());
+        assert_eq!(incomplete.push(b"x"), vec![b"x".to_vec()]);
+
+        let mut complete = RawInputByteFramer::default();
+        oversized.extend_from_slice(b"uy");
+        assert_eq!(complete.push(&oversized), vec![b"y".to_vec()]);
+        assert!(!complete.has_pending_input());
+    }
+
+    #[test]
+    fn oversized_csi_discard_precedes_excess_escape_batching() {
+        let mut framer = RawInputByteFramer::default();
+        let mut oversized = b"\x1b[".to_vec();
+        oversized.extend(std::iter::repeat_n(b'1', MAX_CSI_SEQUENCE_BYTES));
+        assert!(framer.push(&oversized).is_empty());
+
+        let mut continuation = vec![ESC; MAX_LEGACY_ESCAPE_PREFIXES + 1];
+        continuation.push(b'x');
+        let rebuilt = framer
+            .push(&continuation)
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+
+        assert_eq!(rebuilt, continuation[1..]);
+        assert!(!framer.has_pending_input());
+        assert!(framer.discard_until.is_none());
+    }
+
+    #[test]
+    fn doubled_escape_cannot_bypass_oversized_csi_limit() {
+        let mut framer = RawInputByteFramer::with_host_input_policy(true);
+        let mut oversized = b"\x1b\x1b[".to_vec();
+        oversized.extend(std::iter::repeat_n(b'1', MAX_CSI_SEQUENCE_BYTES));
+
+        assert!(framer.push(&oversized).is_empty());
+        assert!(!framer.has_pending_input());
+        assert!(framer.push(b"u").is_empty());
+        assert_eq!(framer.push(b"x"), vec![b"x".to_vec()]);
+    }
+
+    #[test]
+    fn repeated_escape_prefixes_are_drained_iteratively() {
+        let mut framer = RawInputByteFramer::with_host_input_policy(true);
+        let mut input = vec![ESC; MAX_LEGACY_ESCAPE_PREFIXES * 1024];
+        input.extend_from_slice(b"[A");
+
+        let chunks = framer.push(&input);
+        let rebuilt = chunks.into_iter().flatten().collect::<Vec<_>>();
+
+        assert_eq!(rebuilt, input);
+        assert!(!framer.has_pending_input());
     }
 
     #[test]

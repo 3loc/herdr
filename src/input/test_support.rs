@@ -8,6 +8,7 @@ pub(crate) struct KeyboardCorpusCase<'a> {
     pub modifiers: KeyModifiers,
     pub kind: KeyEventKind,
     pub shifted_codepoint: Option<u32>,
+    pub base_layout_codepoint: Option<u32>,
     pub generated_text: Option<String>,
     pub pane_profile: &'a str,
     pub expected_pane_hex: &'a str,
@@ -23,10 +24,9 @@ pub(crate) fn keyboard_corpus_cases(corpus: &str) -> Vec<KeyboardCorpusCase<'_>>
             }
 
             let columns: Vec<_> = line.split('\t').collect();
-            assert_eq!(
-                columns.len(),
-                9,
-                "keyboard corpus row must have 9 columns: {line}"
+            assert!(
+                matches!(columns.len(), 9 | 10),
+                "keyboard corpus row must have 9 or 10 columns: {line}"
             );
 
             Some(KeyboardCorpusCase {
@@ -37,6 +37,10 @@ pub(crate) fn keyboard_corpus_cases(corpus: &str) -> Vec<KeyboardCorpusCase<'_>>
                 kind: parse_kind(columns[4]),
                 shifted_codepoint: (!columns[5].is_empty())
                     .then(|| columns[5].parse::<u32>().expect("shifted codepoint")),
+                base_layout_codepoint: columns
+                    .get(9)
+                    .filter(|field| !field.is_empty())
+                    .map(|field| field.parse::<u32>().expect("base layout codepoint")),
                 generated_text: (columns[6] != "-").then(|| {
                     String::from_utf8(decode_hex(columns[6])).expect("generated text must be UTF-8")
                 }),

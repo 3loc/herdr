@@ -2,6 +2,8 @@ use crossterm::event::{KeyCode, KeyModifiers, MediaKeyCode, ModifierKeyCode};
 
 use super::TerminalKey;
 
+const MAX_KITTY_ASSOCIATED_TEXT_CODEPOINTS: usize = 64;
+
 #[allow(dead_code)] // Next step: raw stdin parser will feed TerminalKey directly through this path.
 pub fn parse_terminal_key_sequence(data: &str) -> Option<TerminalKey> {
     parse_kitty_key_sequence(data)
@@ -16,35 +18,38 @@ fn parse_kitty_key_sequence(data: &str) -> Option<TerminalKey> {
     let mut fields = body.split(';');
     let key_part = fields.next()?;
     let modifier_part = fields.next().unwrap_or("1");
-    let associated_text = fields.next();
+    let associated_text = fields.next().filter(|field| !field.is_empty());
     if fields.next().is_some() {
         return None;
     }
 
+    let modifier_part = if modifier_part.is_empty() {
+        "1"
+    } else {
+        modifier_part
+    };
     let (modifier_text, event_type) = split_modifier_and_event(modifier_part);
     let modifier = modifier_text.parse::<u8>().ok()?.checked_sub(1)?;
 
     let mut key_fields = key_part.split(':');
     let codepoint = key_fields.next()?.parse::<u32>().ok()?;
-    let shifted_codepoint = key_fields
-        .next()
-        .filter(|field| !field.is_empty())
-        .and_then(|field| field.parse::<u32>().ok());
-
-    if let Some(text) = associated_text {
-        if text.parse::<u32>().ok()? != codepoint {
-            return None;
-        }
+    let shifted_codepoint = parse_optional_kitty_codepoint(key_fields.next())?;
+    let base_layout_codepoint = parse_optional_kitty_codepoint(key_fields.next())?;
+    if key_fields.next().is_some() {
+        return None;
     }
 
+    let generated_text = match associated_text {
+        Some(text) => Some(parse_kitty_associated_text(text)?),
+        None => None,
+    };
     let code = kitty_codepoint_to_keycode(codepoint)?;
     let kind = parse_kitty_event_type(event_type)?;
     let mut modifiers = key_modifiers_from_u8(modifier);
     // Kitty permits the shifted alternate only while Shift is active. Normalize
     // contradictory reports here so they cannot dispatch an unshifted command.
     if matches!(code, KeyCode::Char(_))
-        && shifted_codepoint
-            .is_some_and(|shifted| shifted != codepoint && char::from_u32(shifted).is_some())
+        && shifted_codepoint.is_some_and(|shifted| shifted != codepoint)
     {
         modifiers |= KeyModifiers::SHIFT;
     }
@@ -53,7 +58,33 @@ fn parse_kitty_key_sequence(data: &str) -> Option<TerminalKey> {
     if let Some(shifted_codepoint) = shifted_codepoint {
         key = key.with_shifted_codepoint(shifted_codepoint);
     }
-    Some(key)
+    if let Some(base_layout_codepoint) = base_layout_codepoint {
+        key = key.with_base_layout_codepoint(base_layout_codepoint);
+    }
+    Some(key.with_generated_text(generated_text))
+}
+
+fn parse_optional_kitty_codepoint(field: Option<&str>) -> Option<Option<u32>> {
+    let Some(field) = field.filter(|field| !field.is_empty()) else {
+        return Some(None);
+    };
+    let codepoint = field.parse::<u32>().ok()?;
+    char::from_u32(codepoint).map(|_| Some(codepoint))
+}
+
+fn parse_kitty_associated_text(text: &str) -> Option<String> {
+    let mut generated = String::new();
+    for (index, field) in text.split(':').enumerate() {
+        if index >= MAX_KITTY_ASSOCIATED_TEXT_CODEPOINTS {
+            return None;
+        }
+        let ch = field.parse::<u32>().ok().and_then(char::from_u32)?;
+        if ch.is_control() {
+            return None;
+        }
+        generated.push(ch);
+    }
+    Some(generated)
 }
 
 #[allow(dead_code)] // Reserved for the upcoming raw stdin parser.
@@ -662,8 +693,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_kitty_sequence_with_associated_emoji_text() {
-        let key = parse_terminal_key_sequence("\x1b[128512;1;128512u").unwrap();
+    fn parse_kitty_sequence_preserves_associated_text() {
+        let key = parse_terminal_key_sequence("\x1b[128512;1;128512:65039u").unwrap();
         assert_terminal_key_eq(
             key.clone(),
             KeyCode::Char('😀'),
@@ -671,15 +702,44 @@ mod tests {
             crossterm::event::KeyEventKind::Press,
             None,
         );
+        assert_eq!(key.generated_text.as_deref(), Some("😀\u{fe0f}"));
     }
 
     #[test]
-    fn reject_unmodeled_kitty_associated_text() {
-        assert_eq!(parse_terminal_key_sequence("\x1b[128512;1;128513u"), None);
-        assert_eq!(
-            parse_terminal_key_sequence("\x1b[128512;1;128512:65039u"),
-            None
-        );
+    fn parse_kitty_sequence_preserves_full_alternates_and_omitted_modifiers() {
+        let key = parse_terminal_key_sequence("\x1b[97:65:113;;65:769u").unwrap();
+
+        assert_eq!(key.code, KeyCode::Char('a'));
+        assert_eq!(key.modifiers, KeyModifiers::SHIFT);
+        assert_eq!(key.shifted_codepoint, Some('A' as u32));
+        assert_eq!(key.base_layout_codepoint, Some('q' as u32));
+        assert_eq!(key.generated_text.as_deref(), Some("A\u{301}"));
+    }
+
+    #[test]
+    fn parse_kitty_sequence_discards_associated_text_on_release() {
+        let key = parse_terminal_key_sequence("\x1b[97:65;2:3;65u").unwrap();
+
+        assert_eq!(key.kind, crossterm::event::KeyEventKind::Release);
+        assert_eq!(key.generated_text, None);
+    }
+
+    #[test]
+    fn reject_malformed_kitty_alternates_and_associated_text() {
+        for sequence in [
+            "\x1b[97:65:113:120;1u",
+            "\x1b[97;1;1114112u",
+            "\x1b[97;1;65::66u",
+            "\x1b[97;1;3u",
+            "\x1b[97;1;27u",
+            "\x1b[97;1;133u",
+        ] {
+            assert_eq!(parse_terminal_key_sequence(sequence), None, "{sequence:?}");
+        }
+
+        let associated = vec!["97"; MAX_KITTY_ASSOCIATED_TEXT_CODEPOINTS + 1].join(":");
+        let oversized = format!("\x1b[97;1;{associated}u");
+        assert_eq!(parse_terminal_key_sequence(&oversized), None);
     }
 
     #[test]
@@ -974,6 +1034,11 @@ mod tests {
             assert_eq!(
                 parsed.shifted_codepoint, case.shifted_codepoint,
                 "{} shifted codepoint",
+                case.family
+            );
+            assert_eq!(
+                parsed.base_layout_codepoint, case.base_layout_codepoint,
+                "{} base layout codepoint",
                 case.family
             );
         }

@@ -3324,6 +3324,11 @@ mod tests {
             case.family
         );
         assert_eq!(
+            key.base_layout_codepoint, case.base_layout_codepoint,
+            "{} base layout codepoint",
+            case.family
+        );
+        assert_eq!(
             key.generated_text, case.generated_text,
             "{} generated text",
             case.family
@@ -3350,6 +3355,7 @@ mod tests {
             "kitty_5" => b"\x1b[>5u".as_slice(),
             "kitty_7" => b"\x1b[>7u".as_slice(),
             "kitty_11" => b"\x1b[>11u".as_slice(),
+            "kitty_13" => b"\x1b[>13u".as_slice(),
             "kitty_15" => b"\x1b[>15u".as_slice(),
             "kitty_25" => b"\x1b[>25u".as_slice(),
             "kitty_31" => b"\x1b[>31u".as_slice(),
@@ -3491,6 +3497,8 @@ mod tests {
                         | "kitty_text_policy"
                         | "equivalent_press_suffix"
                         | "missing_modifier"
+                        | "adapter_generated_text_loss"
+                        | "adapter_base_layout_loss"
                 ),
                 "unknown difference category: {}",
                 columns[2]
