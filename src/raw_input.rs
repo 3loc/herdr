@@ -1921,7 +1921,42 @@ mod tests {
     #[test]
     fn raw_input_corpus_fixture_extracts_whole_events() {
         let corpus = include_str!("../tests/fixtures/keyboard_protocol_corpus.tsv");
-        assert_fixture_extracts_whole_events(corpus, false);
+        for case in crate::input::test_support::keyboard_corpus_cases(corpus) {
+            let event = if case.input.as_slice() == [ESC] {
+                let mut events = parse_raw_input_bytes_sync(&case.input);
+                assert_eq!(events.len(), 1, "{} event count", case.family);
+                events.remove(0)
+            } else {
+                let (event, consumed) = extract_one_event(&case.input)
+                    .unwrap_or_else(|| panic!("fixture failed to extract: {}", case.family));
+                assert_eq!(consumed, case.input.len(), "{} consumed bytes", case.family);
+                event
+            };
+
+            let RawInputEvent::Key(key) = event else {
+                panic!("fixture did not produce a key: {}", case.family);
+            };
+            assert_eq!(key.code, case.code, "{} code", case.family);
+            assert_eq!(key.modifiers, case.modifiers, "{} modifiers", case.family);
+            assert_eq!(key.kind, case.kind, "{} kind", case.family);
+            assert_eq!(key.repeat_count, 1, "{} repeat count", case.family);
+            assert_eq!(
+                key.shifted_codepoint, case.shifted_codepoint,
+                "{} shifted codepoint",
+                case.family
+            );
+            assert_eq!(
+                key.generated_text, case.generated_text,
+                "{} generated text",
+                case.family
+            );
+            assert_eq!(
+                key.vt_bytes(),
+                Some(case.input.as_slice()),
+                "{} source bytes",
+                case.family
+            );
+        }
     }
 
     #[test]

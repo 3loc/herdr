@@ -2,6 +2,8 @@ mod encode;
 mod model;
 pub(crate) mod mouse;
 mod parse;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 #[allow(unused_imports)]
 pub use encode::{

@@ -3267,6 +3267,199 @@ mod tests {
     use ratatui::{layout::Rect, style::Color};
     use tokio::sync::mpsc;
 
+    fn raw_events_from_host_chunks(
+        chunks: &[&[u8]],
+        case_name: &str,
+        assert_no_early_event: bool,
+    ) -> Vec<crate::raw_input::RawInputEvent> {
+        let mut host_framer = crate::raw_input::RawInputByteFramer::for_host_input();
+        let mut server_framer = crate::raw_input::RawInputFramer::default();
+        let mut events = Vec::new();
+
+        for (index, chunk) in chunks.iter().enumerate() {
+            let mut chunk_events = Vec::new();
+            for framed in host_framer.push(chunk) {
+                chunk_events.extend(server_framer.push(&framed));
+            }
+            if assert_no_early_event && index + 1 < chunks.len() {
+                assert!(
+                    chunk_events.is_empty(),
+                    "{case_name} emitted before its final fragment at chunk {index}"
+                );
+            }
+            events.extend(chunk_events);
+        }
+        for framed in host_framer.flush_timeout() {
+            events.extend(server_framer.push(&framed));
+        }
+        events.extend(server_framer.flush_timeout());
+        assert!(
+            !host_framer.has_pending_input(),
+            "{case_name} left pending host input"
+        );
+        assert!(
+            !server_framer.has_pending_input(),
+            "{case_name} left pending server input"
+        );
+        events
+    }
+
+    fn corpus_key_from_chunks(
+        case: &crate::input::test_support::KeyboardCorpusCase<'_>,
+        chunks: &[&[u8]],
+    ) -> crate::input::TerminalKey {
+        let mut events = raw_events_from_host_chunks(chunks, case.family, true);
+        assert_eq!(events.len(), 1, "{} event count", case.family);
+
+        let crate::raw_input::RawInputEvent::Key(key) = events.remove(0) else {
+            panic!("{} did not produce a key", case.family);
+        };
+        assert_eq!(key.code, case.code, "{} code", case.family);
+        assert_eq!(key.modifiers, case.modifiers, "{} modifiers", case.family);
+        assert_eq!(key.kind, case.kind, "{} kind", case.family);
+        assert_eq!(key.repeat_count, 1, "{} repeat count", case.family);
+        assert_eq!(
+            key.shifted_codepoint, case.shifted_codepoint,
+            "{} shifted codepoint",
+            case.family
+        );
+        assert_eq!(
+            key.generated_text, case.generated_text,
+            "{} generated text",
+            case.family
+        );
+        assert_eq!(
+            key.vt_bytes(),
+            Some(case.input.as_slice()),
+            "{} source bytes",
+            case.family
+        );
+        key
+    }
+
+    fn corpus_pane(profile: &str) -> GhosttyPaneTerminal {
+        let setup = match profile {
+            "legacy" => b"".as_slice(),
+            "application_cursor" => b"\x1b[?1h".as_slice(),
+            "application_keypad" => b"\x1b=".as_slice(),
+            "backarrow" => b"\x1b[?67h".as_slice(),
+            "modify_other_keys_1" => b"\x1b[>4;1m".as_slice(),
+            "modify_other_keys_2" => b"\x1b[>4;2m".as_slice(),
+            "kitty_1" => b"\x1b[>1u".as_slice(),
+            "kitty_3" => b"\x1b[>3u".as_slice(),
+            "kitty_5" => b"\x1b[>5u".as_slice(),
+            "kitty_7" => b"\x1b[>7u".as_slice(),
+            "kitty_11" => b"\x1b[>11u".as_slice(),
+            "kitty_15" => b"\x1b[>15u".as_slice(),
+            "kitty_25" => b"\x1b[>25u".as_slice(),
+            "kitty_31" => b"\x1b[>31u".as_slice(),
+            other => panic!("unsupported pane keyboard profile: {other}"),
+        };
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap();
+        if !setup.is_empty() {
+            pane.process_pty_bytes(PaneId::from_raw(1), 0, setup, &tx);
+        }
+
+        match profile {
+            "application_cursor" => {
+                assert!(
+                    pane.input_state()
+                        .expect("pane input state")
+                        .application_cursor
+                );
+            }
+            "application_keypad" => {
+                let core = pane.core.lock().unwrap();
+                assert!(
+                    core.terminal.mode_get(66).unwrap(),
+                    "application keypad mode"
+                );
+            }
+            "backarrow" => {
+                let core = pane.core.lock().unwrap();
+                assert!(core.terminal.mode_get(67).unwrap(), "backarrow mode");
+            }
+            profile if profile.starts_with("kitty_") => {
+                let expected = profile.trim_start_matches("kitty_").parse::<u16>().unwrap();
+                assert_eq!(
+                    pane.keyboard_protocol(),
+                    Some(crate::input::KeyboardProtocol::Kitty { flags: expected })
+                );
+            }
+            "legacy" => {
+                assert_eq!(
+                    pane.keyboard_protocol(),
+                    Some(crate::input::KeyboardProtocol::Legacy)
+                );
+            }
+            _ => {}
+        }
+        pane
+    }
+
+    #[test]
+    fn keyboard_corpus_survives_fragmentation_and_pane_encoding() {
+        let corpus = include_str!("../../tests/fixtures/keyboard_protocol_corpus.tsv");
+        for case in crate::input::test_support::keyboard_corpus_cases(corpus) {
+            let whole = corpus_key_from_chunks(&case, &[case.input.as_slice()]);
+
+            for split in 1..case.input.len() {
+                corpus_key_from_chunks(&case, &[&case.input[..split], &case.input[split..]]);
+            }
+            let byte_chunks: Vec<_> = case.input.chunks(1).collect();
+            corpus_key_from_chunks(&case, &byte_chunks);
+
+            let pane = corpus_pane(case.pane_profile);
+            let protocol = pane.keyboard_protocol().expect("pane keyboard protocol");
+            let encoded = pane.encode_terminal_key(whole, protocol);
+            assert_eq!(
+                encoded,
+                crate::input::test_support::decode_hex(case.expected_pane_hex),
+                "{} pane output for {}",
+                case.family,
+                case.pane_profile
+            );
+        }
+    }
+
+    #[test]
+    fn keyboard_corpus_preserves_coalesced_event_order_and_sources() {
+        let corpus = include_str!("../../tests/fixtures/keyboard_protocol_corpus.tsv");
+        let cases = crate::input::test_support::keyboard_corpus_cases(corpus);
+        let selected: Vec<_> = ["legacy_ctrl_b", "kitty_shift_letter", "kitty_alt_backspace"]
+            .into_iter()
+            .map(|family| {
+                cases
+                    .iter()
+                    .find(|case| case.family == family)
+                    .unwrap_or_else(|| panic!("missing corpus case: {family}"))
+            })
+            .collect();
+        let input: Vec<_> = selected
+            .iter()
+            .flat_map(|case| case.input.iter().copied())
+            .collect();
+        let events = raw_events_from_host_chunks(&[&input], "coalesced keyboard corpus", false);
+
+        assert_eq!(events.len(), selected.len());
+        for (event, case) in events.into_iter().zip(selected) {
+            let crate::raw_input::RawInputEvent::Key(key) = event else {
+                panic!("{} did not produce a key", case.family);
+            };
+            assert_eq!(key.code, case.code, "{} code", case.family);
+            assert_eq!(key.modifiers, case.modifiers, "{} modifiers", case.family);
+            assert_eq!(key.kind, case.kind, "{} kind", case.family);
+            assert_eq!(
+                key.vt_bytes(),
+                Some(case.input.as_slice()),
+                "{} source bytes",
+                case.family
+            );
+        }
+    }
+
     #[test]
     fn plain_page_keys_host_scroll_for_shell_like_decckm_with_bracketed_paste() {
         assert!(InputState {

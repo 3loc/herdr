@@ -958,7 +958,25 @@ mod tests {
     #[test]
     fn keyboard_protocol_corpus_fixture_parses() {
         let corpus = include_str!("../../tests/fixtures/keyboard_protocol_corpus.tsv");
-        assert_fixture_corpus_parses(corpus);
+        for case in crate::input::test_support::keyboard_corpus_cases(corpus) {
+            let text = std::str::from_utf8(&case.input).expect("fixture input must be UTF-8");
+            let parsed = parse_terminal_key_sequence(text)
+                .unwrap_or_else(|| panic!("fixture failed to parse: {}", case.family));
+
+            assert_eq!(parsed.code, case.code, "{} code", case.family);
+            assert_eq!(
+                parsed.modifiers, case.modifiers,
+                "{} modifiers",
+                case.family
+            );
+            assert_eq!(parsed.kind, case.kind, "{} kind", case.family);
+            assert_eq!(parsed.repeat_count, 1, "{} repeat count", case.family);
+            assert_eq!(
+                parsed.shifted_codepoint, case.shifted_codepoint,
+                "{} shifted codepoint",
+                case.family
+            );
+        }
     }
 
     #[test]
