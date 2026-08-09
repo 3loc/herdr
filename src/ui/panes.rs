@@ -31,8 +31,11 @@ fn pane_border_title(label: &str, pane_width: u16, _focused: bool) -> Option<Str
     Some(format!(" {} ", truncate_end(label, max_label_width)))
 }
 
-fn stable_terminal_inner_rect(pane_inner: Rect, pane_scrollbars: bool) -> Rect {
-    if !pane_scrollbars || pane_inner.width <= 4 {
+fn terminal_inner_rect(rt: &TerminalRuntime, pane_inner: Rect, pane_scrollbars: bool) -> Rect {
+    if !pane_scrollbars
+        || pane_inner.width <= 4
+        || rt.input_state().is_some_and(|state| state.alternate_screen)
+    {
         return pane_inner;
     }
 
@@ -175,7 +178,7 @@ fn stable_scrollbar_gutter(
     pane_inner: Rect,
     pane_scrollbars: bool,
 ) -> (Rect, Option<Rect>) {
-    let inner_rect = stable_terminal_inner_rect(pane_inner, pane_scrollbars);
+    let inner_rect = terminal_inner_rect(rt, pane_inner, pane_scrollbars);
     if inner_rect == pane_inner {
         return (inner_rect, None);
     }
@@ -212,7 +215,7 @@ pub(super) fn resize_tab_panes(
                 Borders::NONE
             };
             let pane_inner = pane_inner_rect(area, borders);
-            let inner_rect = stable_terminal_inner_rect(pane_inner, app.pane_scrollbars);
+            let inner_rect = terminal_inner_rect(rt, pane_inner, app.pane_scrollbars);
             if !app.direct_attach_resize_locks.contains(terminal_id) {
                 rt.resize(
                     inner_rect.height,
@@ -234,7 +237,7 @@ pub(super) fn resize_tab_panes(
         let pane_inner = pane_inner_rect(info.rect, info.borders);
 
         if let Some((terminal_id, rt)) = runtime_for_tab_pane(terminal_runtimes, tab, info.id) {
-            let inner_rect = stable_terminal_inner_rect(pane_inner, app.pane_scrollbars);
+            let inner_rect = terminal_inner_rect(rt, pane_inner, app.pane_scrollbars);
             if !app.direct_attach_resize_locks.contains(terminal_id) {
                 rt.resize(
                     inner_rect.height,
@@ -1336,6 +1339,51 @@ mod tests {
         assert_eq!(info.rect, area);
         assert_eq!(info.scrollbar_rect, None);
         assert_eq!(info.inner_rect, Rect::new(10, 3, 39, 8));
+    }
+
+    #[tokio::test]
+    async fn alternate_screen_reclaims_scrollbar_gutter_and_restores_it_on_exit() {
+        let mut app = AppState::test_new();
+        let mut workspace = Workspace::test_new("test");
+        let root_pane = workspace.tabs[0].root_pane;
+        workspace.tabs[0].runtimes.insert(
+            root_pane,
+            TerminalRuntime::test_with_scrollback_bytes(
+                40,
+                8,
+                1024,
+                b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n",
+            ),
+        );
+        app.workspaces = vec![workspace];
+        app.active = Some(0);
+
+        let area = Rect::new(10, 3, 40, 8);
+        let terminal_runtimes = TerminalRuntimeRegistry::new();
+        let assert_geometry = |expected_width, has_scrollbar| {
+            let infos = compute_pane_infos(
+                &app,
+                &terminal_runtimes,
+                area,
+                true,
+                crate::kitty_graphics::HostCellSize::default(),
+            );
+            assert_eq!(
+                infos[0].inner_rect,
+                Rect::new(area.x, area.y, expected_width, area.height)
+            );
+            assert_eq!(infos[0].scrollbar_rect.is_some(), has_scrollbar);
+            assert_eq!(
+                app.workspaces[0].tabs[0].runtimes[&root_pane].current_size(),
+                (area.height, expected_width)
+            );
+        };
+
+        assert_geometry(39, true);
+        app.workspaces[0].tabs[0].runtimes[&root_pane].test_process_pty_bytes(b"\x1b[?1049h");
+        assert_geometry(40, false);
+        app.workspaces[0].tabs[0].runtimes[&root_pane].test_process_pty_bytes(b"\x1b[?1049l");
+        assert_geometry(39, true);
     }
 
     #[tokio::test]
