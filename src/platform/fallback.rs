@@ -94,8 +94,7 @@ pub(crate) fn hostname() -> Option<String> {
 }
 
 pub(crate) fn local_datetime() -> Option<time::PrimitiveDateTime> {
-    let now = time::OffsetDateTime::now_utc();
-    Some(time::PrimitiveDateTime::new(now.date(), now.time()))
+    None
 }
 
 fn raw_command_argv(command: &str, flag: &str) -> Vec<std::ffi::OsString> {

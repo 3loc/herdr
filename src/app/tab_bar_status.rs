@@ -130,7 +130,11 @@ impl App {
             self.next_tab_bar_datetime_refresh = Some(now + DATETIME_REFRESH_INTERVAL);
         }
 
-        if self.tab_bar_commands.is_empty() {
+        let command_due = self
+            .tab_bar_commands
+            .iter()
+            .any(|runtime| runtime.task.is_none() && now >= runtime.next_run_at);
+        if !command_due {
             return changed;
         }
 
@@ -224,10 +228,37 @@ fn sanitize_status_text(value: &str) -> Option<String> {
     let value: String = value
         .trim()
         .chars()
-        .filter(|character| !character.is_control())
+        .filter(|character| !character.is_control() && !is_unicode_format_control(*character))
         .take(MAX_STATUS_TEXT_CHARS)
         .collect();
     (!value.is_empty()).then_some(value)
+}
+
+fn is_unicode_format_control(character: char) -> bool {
+    matches!(
+        character,
+        '\u{00ad}'
+            | '\u{0600}'..='\u{0605}'
+            | '\u{061c}'
+            | '\u{06dd}'
+            | '\u{070f}'
+            | '\u{0890}'..='\u{0891}'
+            | '\u{08e2}'
+            | '\u{17b4}'..='\u{17b5}'
+            | '\u{180e}'
+            | '\u{200b}'..='\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{206f}'
+            | '\u{feff}'
+            | '\u{fff9}'..='\u{fffb}'
+            | '\u{110bd}'
+            | '\u{110cd}'
+            | '\u{13430}'..='\u{1343f}'
+            | '\u{1bca0}'..='\u{1bca3}'
+            | '\u{1d173}'..='\u{1d17a}'
+            | '\u{e0001}'
+            | '\u{e0020}'..='\u{e007f}'
+    )
 }
 
 fn command_output_text(output: &[u8]) -> Option<String> {
@@ -486,12 +517,42 @@ mod tests {
     }
 
     #[test]
+    fn datetime_refresh_updates_its_segment_once_per_deadline() {
+        let mut app = test_app();
+        app.configure_tab_bar_status(
+            &[TabBarRightEntryConfig::Datetime {
+                format: "%Y-%m-%d %H:%M:%S".into(),
+            }],
+            " ",
+        );
+        app.state.tab_bar_right[0] = TabBarStatusSegment::Text(None);
+        let deadline = app
+            .next_tab_bar_datetime_refresh
+            .expect("datetime refresh deadline");
+
+        assert!(app.handle_tab_bar_status_tasks(deadline));
+        assert!(matches!(
+            &app.state.tab_bar_right[0],
+            TabBarStatusSegment::Text(Some(value)) if !value.is_empty()
+        ));
+        assert!(!app.handle_tab_bar_status_tasks(deadline));
+    }
+
+    #[test]
     fn command_output_uses_sanitized_last_line() {
         assert_eq!(
             command_output_text(b"old\n win\x1b[31mter\r\n"),
             Some("win[31mter".into())
         );
         assert_eq!(command_output_text(b"\r\n"), None);
+    }
+
+    #[test]
+    fn status_text_strips_bidi_and_zero_width_format_controls() {
+        assert_eq!(
+            sanitize_status_text("safe\u{202e}evil\u{200b}"),
+            Some("safeevil".into())
+        );
     }
 
     #[test]

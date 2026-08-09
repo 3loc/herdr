@@ -32,8 +32,8 @@ pub struct UiConfig {
     pub sidebar_width: u16,
     /// Host cursor policy. Default: auto.
     pub host_cursor: HostCursorModeConfig,
-    /// Status entry.
-    pub status: StatusConfig,
+    /// Tab bar status entries.
+    pub tab_bar_right: Vec<TabBarRightEntryConfig>,
     #[serde(rename = "accent_color")]
     pub accent: String,
     #[serde(skip)]
@@ -67,7 +67,7 @@ pub enum HostCursorModeConfig {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum StatusConfig {
+pub enum TabBarRightEntryConfig {
     Hostname,
     Datetime {
         format: String,
@@ -145,7 +145,8 @@ class CollectKeysTests(unittest.TestCase):
             entries["ui.host_cursor"]["values"], ["auto", "native-cursor", "drawn"]
         )
         self.assertEqual(
-            entries["ui.status"]["values"], ["hostname", "datetime", "command"]
+            entries["ui.tab_bar_right"]["values"],
+            ["hostname", "datetime", "command"],
         )
         self.assertNotIn("values", entries["keys.zoom"])
 
