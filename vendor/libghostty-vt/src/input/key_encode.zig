@@ -392,14 +392,15 @@ fn legacy(
         return try writer.writeAll(sequence);
     }
 
-    // If we match a control sequence, we output that directly. For
-    // ctrlSeq we have to use all mods because we want it to only
-    // match ctrl+<char>.
+    // If we match a control sequence, we output that directly. Keep
+    // modifyOtherKeys sensitive to every modifier, but let legacy encoding
+    // ignore a Shift modifier already consumed to produce text.
+    const ctrl_mods = if (opts.modify_other_keys_state_2) all_mods else effective_mods;
     if (ctrlSeq(
         event.key,
         event.utf8,
         event.unshifted_codepoint,
-        all_mods,
+        ctrl_mods,
     )) |char| {
         // C0 sequences support alt-as-esc prefixing.
         if (binding_mods.alt) {
@@ -2291,6 +2292,19 @@ test "legacy: ctrl+shift+letter ascii" {
     }
 }
 
+test "legacy: ctrl+shift+letter with consumed shift is a control sequence" {
+    var buf: [128]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
+    try legacy(&writer, .{
+        .key = .key_c,
+        .mods = .{ .ctrl = true, .shift = true },
+        .consumed_mods = .{ .shift = true },
+        .utf8 = "C",
+        .unshifted_codepoint = 'c',
+    }, .{});
+    try testing.expectEqualStrings("\x03", writer.buffered());
+}
+
 test "legacy: shift+function key should use all mods" {
     var buf: [128]u8 = undefined;
     var writer: std.Io.Writer = .fixed(&buf);
@@ -2424,6 +2438,22 @@ test "legacy: f1" {
             .consumed_mods = .{},
         }, .{});
         try testing.expectEqualStrings("\x1b[15;5~", writer.buffered());
+    }
+}
+
+test "legacy: ctrl+tab preserves tab compatibility" {
+    var buf: [128]u8 = undefined;
+
+    for ([_]Options{
+        .{},
+        .{ .modify_other_keys_state_2 = true },
+    }) |opts| {
+        var writer: std.Io.Writer = .fixed(&buf);
+        try legacy(&writer, .{
+            .key = .tab,
+            .mods = .{ .ctrl = true },
+        }, opts);
+        try testing.expectEqualStrings("\t", writer.buffered());
     }
 }
 

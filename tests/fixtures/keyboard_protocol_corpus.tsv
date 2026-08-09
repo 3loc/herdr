@@ -105,13 +105,15 @@ kitty_shift_backspace_modify_other_keys_2	1b5b3132373b3275	backspace	shift	press
 legacy_alt_backspace_kitty_1	1b7f	backspace	alt	press		-	kitty_1	1b5b3132373b3375
 kitty_release_letter_kitty_3	1b5b3130383a37363b323a3375	char:l	shift	release	76	-	kitty_3	1b5b3130383b323a3375
 kitty_shift_letter_kitty_7	1b5b3130383a37363b323a3175	char:l	shift	press	76	-	kitty_7	4c
-kitty_ambiguous_shift_digit_kitty_7	1b5b34393b3275	char:1	shift	press		-	kitty_7	1b5b34393b323a3175
-kitty_shift_letter_kitty_15	1b5b3130383a37363b323a3175	char:l	shift	press	76	-	kitty_15	1b5b3130383a37363b323a3175
-kitty_shift_letter_kitty_31	1b5b3130383a37363b323a3175	char:l	shift	press	76	-	kitty_31	1b5b3130383a37363b323a313b373675
+kitty_ambiguous_shift_digit_kitty_7	1b5b34393b3275	char:1	shift	press		-	kitty_7	1b5b34393b3275
+kitty_shift_letter_kitty_15	1b5b3130383a37363b323a3175	char:l	shift	press	76	-	kitty_15	1b5b3130383a37363b3275
+kitty_shift_letter_kitty_31	1b5b3130383a37363b323a3175	char:l	shift	press	76	-	kitty_31	1b5b3130383a37363b323b373675
 kitty_ctrl_shift_letter_kitty_5	1b5b3130383a37363b363a3175	char:l	control+shift	press	76	-	kitty_5	1b5b3130383a37363b3675
 kitty_shift_letter_kitty_25	1b5b3130383a37363b323a3175	char:l	shift	press	76	-	kitty_25	1b5b3130383b323b373675
 legacy_plain_a	61	char:a	-	press		61	legacy	61
 legacy_shift_a	41	char:A	shift	press		41	legacy	41
+legacy_shift_a_kitty_13	41	char:A	shift	press		41	kitty_13	41
+legacy_bang_kitty_13	21	char:!	-	press		21	kitty_13	21
 legacy_unicode_e_acute	c3a9	char:é	-	press		c3a9	legacy	c3a9
 legacy_f1	1b4f50	f:1	-	press		-	legacy	1b4f50
 kitty_f13_legacy	1b5b35373337363b3175	f:13	-	press		-	legacy	1b5b313b3250
@@ -126,9 +128,12 @@ kitty_hyper_a_kitty_1	1b5b39373b313775	char:a	hyper	press		-	kitty_1	1b5b39373b3
 kitty_meta_a_kitty_1	1b5b39373b333375	char:a	meta	press		-	kitty_1	1b5b39373b333375
 kitty_hyper_enter_kitty_1	1b5b31333b313775	enter	hyper	press		-	kitty_1	1b5b31333b313775
 kitty_meta_enter_kitty_1	1b5b31333b333375	enter	meta	press		-	kitty_1	1b5b31333b333375
+kitty_repeat_a_kitty_3	1b5b39373b313a3275	char:a	-	repeat		-	kitty_3	1b5b39373b313a3275
 kitty_repeat_a_kitty_11	1b5b39373b313a3275	char:a	-	repeat		-	kitty_11	1b5b39373b313a3275
-kitty_super_a_kitty_31	1b5b39373b3975	char:a	super	press		-	kitty_31	1b5b39373b393a3175
-kitty_hyper_a_kitty_31	1b5b39373b313775	char:a	hyper	press		-	kitty_31	1b5b39373b31373a3175
-kitty_meta_a_kitty_31	1b5b39373b333375	char:a	meta	press		-	kitty_31	1b5b39373b33333a3175
+kitty_super_a_kitty_31	1b5b39373b3975	char:a	super	press		-	kitty_31	1b5b39373b3975
+kitty_hyper_a_kitty_31	1b5b39373b313775	char:a	hyper	press		-	kitty_31	1b5b39373b313775
+kitty_meta_a_kitty_31	1b5b39373b333375	char:a	meta	press		-	kitty_31	1b5b39373b333375
 kitty_full_alternates_kitty_13	1b5b39373a36353a3131333b3275	char:a	shift	press	65	-	kitty_13	1b5b39373a36353a3131333b3275	113
 kitty_full_alternates_associated_text	1b5b39373a36353a3131333b3b36353a37363975	char:a	shift	press	65	41cc81	legacy	41cc81	113
+kitty_full_alternates_associated_text_kitty_31	1b5b39373a36353a3131333b3b36353a37363975	char:a	shift	press	65	41cc81	kitty_31	1b5b39373a36353a3131333b323b36353a37363975	113
+kitty_ctrl_tab_legacy	1b5b393b3575	tab	control	press		-	legacy	09

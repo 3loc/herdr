@@ -24,7 +24,7 @@ use super::{
         ghostty_key_event_from_terminal_key, ghostty_mouse_encoder_for_terminal,
         ghostty_mouse_event_from_button_kind, ghostty_mouse_event_from_motion_kind,
         ghostty_mouse_event_from_wheel_kind, ghostty_mouse_position_for_terminal,
-        ghostty_prefers_herdr_text_encoding, GhosttyKeyEventAdapterError,
+        GhosttyKeyEventAdapterError,
     },
     kitty_keyboard::KittyKeyboardTracker,
     osc::{
@@ -174,7 +174,6 @@ enum KeyEncodingUnavailable {
     Adapter(GhosttyKeyEventAdapterError),
     EncoderLockPoisoned,
     EncoderError,
-    EventKindMismatch,
 }
 
 pub(crate) struct GhosttyPaneTerminal {
@@ -1854,7 +1853,7 @@ impl GhosttyPaneTerminal {
         protocol: crate::input::KeyboardProtocol,
     ) -> Vec<u8> {
         let fallback_key = key.clone();
-        match self.encode_terminal_key_once_outcome(key, protocol) {
+        match self.encode_terminal_key_once_outcome(key) {
             KeyEncodingOutcome::Encoded(bytes) => bytes,
             KeyEncodingOutcome::Suppressed => Vec::new(),
             KeyEncodingOutcome::Unavailable(reason) => {
@@ -1867,17 +1866,12 @@ impl GhosttyPaneTerminal {
     fn encode_terminal_key_once_outcome(
         &self,
         key: crate::input::TerminalKey,
-        protocol: crate::input::KeyboardProtocol,
     ) -> KeyEncodingOutcome {
-        if matches!(protocol, crate::input::KeyboardProtocol::Legacy)
-            && key.code == crossterm::event::KeyCode::Tab
-            && key.modifiers == crossterm::event::KeyModifiers::CONTROL
-        {
-            return KeyEncodingOutcome::Encoded(crate::input::encode_terminal_key(key, protocol));
-        }
-
-        if ghostty_prefers_herdr_text_encoding(&key) {
-            return KeyEncodingOutcome::Encoded(crate::input::encode_terminal_key(key, protocol));
+        if key.is_text_commit() {
+            return key
+                .generated_text
+                .map(|text| KeyEncodingOutcome::Encoded(text.into_bytes()))
+                .unwrap_or(KeyEncodingOutcome::Suppressed);
         }
 
         let event = match ghostty_key_event_from_terminal_key(&key) {
@@ -1892,10 +1886,7 @@ impl GhosttyPaneTerminal {
         };
         match encoder.encode(&event) {
             Ok(bytes) if bytes.is_empty() => KeyEncodingOutcome::Suppressed,
-            Ok(bytes) if encoded_key_preserves_event_kind(&bytes, &key, protocol) => {
-                KeyEncodingOutcome::Encoded(bytes)
-            }
-            Ok(_) => KeyEncodingOutcome::Unavailable(KeyEncodingUnavailable::EventKindMismatch),
+            Ok(bytes) => KeyEncodingOutcome::Encoded(bytes),
             Err(_) => KeyEncodingOutcome::Unavailable(KeyEncodingUnavailable::EncoderError),
         }
     }
@@ -2213,8 +2204,7 @@ fn log_key_encoding_unavailable(reason: KeyEncodingUnavailable) {
     static ENCODER_ERROR_LOGGED: AtomicBool = AtomicBool::new(false);
 
     let first_failure = match reason {
-        KeyEncodingUnavailable::Adapter(GhosttyKeyEventAdapterError::UnsupportedKey)
-        | KeyEncodingUnavailable::EventKindMismatch => {
+        KeyEncodingUnavailable::Adapter(GhosttyKeyEventAdapterError::UnsupportedKey) => {
             debug!(
                 ?reason,
                 "Ghostty key encoding unavailable; using compatibility encoder"
@@ -2233,23 +2223,6 @@ fn log_key_encoding_unavailable(reason: KeyEncodingUnavailable) {
             "Ghostty key encoding failed; using compatibility encoder"
         );
     }
-}
-
-fn encoded_key_preserves_event_kind(
-    bytes: &[u8],
-    key: &crate::input::TerminalKey,
-    protocol: crate::input::KeyboardProtocol,
-) -> bool {
-    if !protocol.reports_event_types() || key.kind == crossterm::event::KeyEventKind::Press {
-        return true;
-    }
-
-    std::str::from_utf8(bytes)
-        .ok()
-        .and_then(crate::input::parse_terminal_key_sequence)
-        .is_some_and(|parsed| {
-            parsed.code == key.code && parsed.modifiers == key.modifiers && parsed.kind == key.kind
-        })
 }
 
 fn cursor_position_settle_pending(core: &GhosttyPaneCore) -> bool {
@@ -4673,7 +4646,7 @@ mod tests {
         .with_generated_text(Some("x".to_owned()))
         .with_repeat_count(3);
         assert_eq!(
-            pane.encode_terminal_key_once_outcome(backspace.clone(), protocol),
+            pane.encode_terminal_key_once_outcome(backspace.clone()),
             KeyEncodingOutcome::Suppressed
         );
         assert_eq!(pane.encode_terminal_key(backspace, protocol), b"");
@@ -4684,7 +4657,7 @@ mod tests {
         )
         .with_generated_text(Some("x".to_owned()));
         assert_eq!(
-            pane.encode_terminal_key_once_outcome(enter.clone(), protocol),
+            pane.encode_terminal_key_once_outcome(enter.clone()),
             KeyEncodingOutcome::Encoded(b"x".to_vec())
         );
         assert_eq!(pane.encode_terminal_key(enter, protocol), b"x");
@@ -4702,10 +4675,7 @@ mod tests {
         )
         .with_generated_text(Some("fallback".to_owned()));
         assert_eq!(
-            pane.encode_terminal_key_once_outcome(
-                key.clone(),
-                crate::input::KeyboardProtocol::Legacy,
-            ),
+            pane.encode_terminal_key_once_outcome(key.clone()),
             KeyEncodingOutcome::Unavailable(KeyEncodingUnavailable::Adapter(
                 GhosttyKeyEventAdapterError::UnsupportedKey,
             ))
@@ -4748,10 +4718,7 @@ mod tests {
         );
 
         assert_eq!(
-            pane.encode_terminal_key_once_outcome(
-                key.clone(),
-                crate::input::KeyboardProtocol::Legacy,
-            ),
+            pane.encode_terminal_key_once_outcome(key.clone()),
             KeyEncodingOutcome::Unavailable(KeyEncodingUnavailable::EncoderLockPoisoned)
         );
         assert_eq!(
@@ -4821,7 +4788,7 @@ mod tests {
     }
 
     #[test]
-    fn ghostty_char_keys_still_use_herdr_encoding() {
+    fn ghostty_encoder_owns_char_keys_and_pane_keyboard_mode() {
         let (tx, _rx) = mpsc::channel(4);
         let mut terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
         terminal.write(b"\x1b[>1u");
@@ -4835,7 +4802,7 @@ mod tests {
             crate::input::KeyboardProtocol::Legacy,
         );
 
-        assert_eq!(encoded, vec![1]);
+        assert_eq!(encoded, b"\x1b[97;6u");
     }
 
     #[test]

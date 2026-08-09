@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: herdr maintainers <maintainers@herdr.dev>
+Date: Sun, 9 Aug 2026 00:00:00 +0000
+Subject: [PATCH] preserve legacy ctrl-tab compatibility
+
+Encode Ctrl-Tab as Tab when the destination pane has not enabled the Kitty
+keyboard protocol, matching Herdr's established terminal-proxy behavior.
+
+Herdr issue: https://github.com/herdrdev/herdr/issues/2514
+Vendored base: c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3
+---
+diff --git a/vendor/libghostty-vt/src/input/function_keys.zig b/vendor/libghostty-vt/src/input/function_keys.zig
+index b1a0f0a5..4e3f709b 100644
+--- a/vendor/libghostty-vt/src/input/function_keys.zig
++++ b/vendor/libghostty-vt/src/input/function_keys.zig
+@@ -192,7 +192,7 @@ pub const keys = keys: {
+ 
+         // Everything else
+         .{ .mods = .{ .alt = true, .shift = true }, .sequence = "\x1b[27;4;9~" },
+-        .{ .mods = .{ .ctrl = true }, .sequence = "\x1b[27;5;9~" },
++        .{ .mods = .{ .ctrl = true }, .sequence = "\t" },
+         .{ .mods = .{ .ctrl = true, .shift = true }, .sequence = "\x1b[27;6;9~" },
+         .{ .mods = .{ .alt = true, .ctrl = true }, .sequence = "\x1b[27;7;9~" },
+         .{ .mods = .{ .alt = true, .ctrl = true, .shift = true }, .sequence = "\x1b[27;8;9~" },
+diff --git a/vendor/libghostty-vt/src/input/key_encode.zig b/vendor/libghostty-vt/src/input/key_encode.zig
+index a3074601..79197a5e 100644
+--- a/vendor/libghostty-vt/src/input/key_encode.zig
++++ b/vendor/libghostty-vt/src/input/key_encode.zig
+@@ -2427,6 +2427,22 @@ test "legacy: f1" {
+     }
+ }
+ 
++test "legacy: ctrl+tab preserves tab compatibility" {
++    var buf: [128]u8 = undefined;
++
++    for ([_]Options{
++        .{},
++        .{ .modify_other_keys_state_2 = true },
++    }) |opts| {
++        var writer: std.Io.Writer = .fixed(&buf);
++        try legacy(&writer, .{
++            .key = .tab,
++            .mods = .{ .ctrl = true },
++        }, opts);
++        try testing.expectEqualStrings("\t", writer.buffered());
++    }
++}
++
+ test "legacy: extended function keys" {
+     var buf: [128]u8 = undefined;
+ 
+-- 
+2.50.1

@@ -523,6 +523,7 @@ fn windows_client_input_event_from_raw(
                     bytes: bytes.to_vec(),
                     shifted_codepoint: key.shifted_codepoint,
                     base_layout_codepoint: key.base_layout_codepoint,
+                    text_commit: key.is_text_commit(),
                 }
             } else if let Some(record) = key.windows_record() {
                 crate::protocol::ClientKeySource::WindowsConsole { record }
@@ -797,18 +798,23 @@ mod windows_tests {
     #[test]
     fn windows_crossterm_printable_press_keeps_key_semantics_and_text() {
         let event = Event::Key(KeyEvent::new(KeyCode::Char('你'), KeyModifiers::empty()));
+        let event = windows_crossterm_input_event(event).expect("printable key converts");
 
         assert_eq!(
-            windows_crossterm_input_event(event),
-            Some(crate::protocol::ClientInputEvent::Key {
+            event,
+            crate::protocol::ClientInputEvent::Key {
                 code: crate::protocol::ClientKeyCode::Char('你'),
                 modifiers: 0,
                 kind: crate::protocol::ClientKeyKind::Press,
                 repeat_count: 1,
                 generated_text: Some("你".to_string()),
                 source: crate::protocol::ClientKeySource::Synthesized,
-            })
+            }
         );
+        let crate::raw_input::RawInputEvent::Key(key) = event.to_raw_input_event() else {
+            panic!("expected key event");
+        };
+        assert!(key.is_text_commit());
     }
 
     #[test]
@@ -908,6 +914,7 @@ mod windows_tests {
                     bytes: vec![4],
                     shifted_codepoint: None,
                     base_layout_codepoint: None,
+                    text_commit: false,
                 },
             }
         );
@@ -935,6 +942,7 @@ mod windows_tests {
                     bytes: b"\x1b[A".to_vec(),
                     shifted_codepoint: None,
                     base_layout_codepoint: None,
+                    text_commit: false,
                 },
             }
         );
@@ -987,6 +995,7 @@ mod windows_tests {
                     bytes: vec![0x1b],
                     shifted_codepoint: None,
                     base_layout_codepoint: None,
+                    text_commit: false,
                 },
             }
         );

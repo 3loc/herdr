@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: herdr maintainers <maintainers@herdr.dev>
+Date: Sun, 9 Aug 2026 00:00:00 +0000
+Subject: [PATCH] honor consumed shift in legacy control keys
+
+Treat a Shift modifier consumed while producing text as non-binding when
+encoding legacy control keys, while preserving modifyOtherKeys mode 2.
+
+Herdr issue: https://github.com/herdrdev/herdr/issues/2514
+Vendored base: c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3
+---
+diff --git a/vendor/libghostty-vt/src/input/key_encode.zig b/vendor/libghostty-vt/src/input/key_encode.zig
+index a3074601..4fdea85b 100644
+--- a/vendor/libghostty-vt/src/input/key_encode.zig
++++ b/vendor/libghostty-vt/src/input/key_encode.zig
+@@ -392,14 +392,15 @@ fn legacy(
+         return try writer.writeAll(sequence);
+     }
+ 
+-    // If we match a control sequence, we output that directly. For
+-    // ctrlSeq we have to use all mods because we want it to only
+-    // match ctrl+<char>.
++    // If we match a control sequence, we output that directly. Keep
++    // modifyOtherKeys sensitive to every modifier, but let legacy encoding
++    // ignore a Shift modifier already consumed to produce text.
++    const ctrl_mods = if (opts.modify_other_keys_state_2) all_mods else effective_mods;
+     if (ctrlSeq(
+         event.key,
+         event.utf8,
+         event.unshifted_codepoint,
+-        all_mods,
++        ctrl_mods,
+     )) |char| {
+         // C0 sequences support alt-as-esc prefixing.
+         if (binding_mods.alt) {
+@@ -2291,6 +2292,19 @@ test "legacy: ctrl+shift+letter ascii" {
+     }
+ }
+ 
++test "legacy: ctrl+shift+letter with consumed shift is a control sequence" {
++    var buf: [128]u8 = undefined;
++    var writer: std.Io.Writer = .fixed(&buf);
++    try legacy(&writer, .{
++        .key = .key_c,
++        .mods = .{ .ctrl = true, .shift = true },
++        .consumed_mods = .{ .shift = true },
++        .utf8 = "C",
++        .unshifted_codepoint = 'c',
++    }, .{});
++    try testing.expectEqualStrings("\x03", writer.buffered());
++}
++
+ test "legacy: shift+function key should use all mods" {
+     var buf: [128]u8 = undefined;
+     var writer: std.Io.Writer = .fixed(&buf);
+-- 
+2.50.1

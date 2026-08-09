@@ -644,6 +644,27 @@ mod tests {
     }
 
     #[test]
+    fn omitted_kitty_press_suffix_is_semantically_equivalent() {
+        for (implicit_press, explicit_press) in [
+            ("\x1b[108:76;2u", "\x1b[108:76;2:1u"),
+            ("\x1b[108:76;2;76u", "\x1b[108:76;2:1;76u"),
+            ("\x1b[97;9u", "\x1b[97;9:1u"),
+        ] {
+            let implicit = parse_terminal_key_sequence(implicit_press).unwrap();
+            let explicit = parse_terminal_key_sequence(explicit_press).unwrap();
+            assert_eq!(implicit.code, explicit.code);
+            assert_eq!(implicit.modifiers, explicit.modifiers);
+            assert_eq!(implicit.kind, explicit.kind);
+            assert_eq!(implicit.shifted_codepoint, explicit.shifted_codepoint);
+            assert_eq!(
+                implicit.base_layout_codepoint,
+                explicit.base_layout_codepoint
+            );
+            assert_eq!(implicit.generated_text, explicit.generated_text);
+        }
+    }
+
+    #[test]
     fn parse_kitty_sequence_preserves_shifted_letter_pair_and_release() {
         let key = parse_terminal_key_sequence("\x1b[108:76;2:3u").unwrap();
         assert_eq!(key.code, KeyCode::Char('l'));

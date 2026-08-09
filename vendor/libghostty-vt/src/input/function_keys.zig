@@ -192,7 +192,7 @@ pub const keys = keys: {
 
         // Everything else
         .{ .mods = .{ .alt = true, .shift = true }, .sequence = "\x1b[27;4;9~" },
-        .{ .mods = .{ .ctrl = true }, .sequence = "\x1b[27;5;9~" },
+        .{ .mods = .{ .ctrl = true }, .sequence = "\t" },
         .{ .mods = .{ .ctrl = true, .shift = true }, .sequence = "\x1b[27;6;9~" },
         .{ .mods = .{ .alt = true, .ctrl = true }, .sequence = "\x1b[27;7;9~" },
         .{ .mods = .{ .alt = true, .ctrl = true, .shift = true }, .sequence = "\x1b[27;8;9~" },

@@ -51,10 +51,6 @@ pub(super) fn ghostty_key_event_from_terminal_key(
     Ok(event)
 }
 
-pub(super) fn ghostty_prefers_herdr_text_encoding(key: &crate::input::TerminalKey) -> bool {
-    matches!(key.code, crossterm::event::KeyCode::Char(_))
-}
-
 pub(super) fn ghostty_mods_from_key_modifiers(modifiers: crossterm::event::KeyModifiers) -> u16 {
     let mut ghostty_mods = 0u16;
     if modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
@@ -90,6 +86,7 @@ fn ghostty_consumed_mods(key: &crate::input::TerminalKey) -> u16 {
         && matches!(key.code, crossterm::event::KeyCode::Char(c) if
             has_generated_text
                 || key.shifted_codepoint.and_then(char::from_u32).is_some()
+                || c.is_ascii_uppercase()
                 || (only_shift
                     && (c.is_ascii_alphabetic()
                         || ghostty_unshifted_ascii_pair(c).is_some())));

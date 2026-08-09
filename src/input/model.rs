@@ -74,6 +74,7 @@ pub struct TerminalKey {
     pub shifted_codepoint: Option<u32>,
     pub base_layout_codepoint: Option<u32>,
     pub generated_text: Option<String>,
+    text_commit: bool,
     source: KeySource,
 }
 
@@ -87,6 +88,7 @@ impl TerminalKey {
             shifted_codepoint: None,
             base_layout_codepoint: None,
             generated_text: None,
+            text_commit: false,
             source: KeySource::Synthesized,
         }
     }
@@ -95,6 +97,7 @@ impl TerminalKey {
         if kind == crossterm::event::KeyEventKind::Release {
             self.repeat_count = 1;
             self.generated_text = None;
+            self.text_commit = false;
         }
         self.kind = kind;
         self
@@ -201,6 +204,10 @@ impl TerminalKey {
         )
     }
 
+    pub(crate) fn is_text_commit(&self) -> bool {
+        self.text_commit
+    }
+
     pub fn with_text_commit(mut self) -> Self {
         let has_text_only_modifiers = match self.code {
             KeyCode::Char(ch) if ch.is_uppercase() => {
@@ -214,6 +221,7 @@ impl TerminalKey {
                 KeyCode::Char(ch) => Some(ch.to_string()),
                 _ => None,
             };
+            self.text_commit = self.generated_text.is_some();
         }
         self
     }
@@ -405,8 +413,10 @@ mod tests {
             .with_generated_text(Some("ignored".to_owned()));
 
         assert_eq!(release.generated_text, None);
+        assert!(!release.is_text_commit());
         assert_eq!(release.repeat_count, 1);
         assert_eq!(regrouped_release.generated_text, None);
+        assert!(!regrouped_release.is_text_commit());
         assert_eq!(regrouped_release.repeat_count, 1);
     }
 
@@ -415,6 +425,7 @@ mod tests {
         let key = TerminalKey::new(KeyCode::Char('É'), KeyModifiers::SHIFT).with_text_commit();
 
         assert_eq!(key.generated_text.as_deref(), Some("É"));
+        assert!(key.is_text_commit());
     }
 
     #[test]

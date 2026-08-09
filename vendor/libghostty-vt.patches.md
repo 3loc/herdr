@@ -148,3 +148,75 @@ cd vendor/libghostty-vt && zig build test-lib-vt -Dsimd=true
 just test-one keyboard_encoder_differences_are_explicit
 just test-one keyboard_corpus_survives_fragmentation_and_pane_encoding
 ```
+
+## 0005 preserve legacy Ctrl-Tab compatibility
+
+status: active
+
+patch: `vendor/patches/libghostty-vt/0005-preserve-legacy-ctrl-tab.patch`
+
+herdr issue: https://github.com/herdrdev/herdr/issues/2514
+
+upstream discussion: not opened; this behavior preserves Herdr's existing
+terminal-proxy compatibility policy rather than changing Ghostty's terminal UI
+policy
+
+upstream pr: not opened
+
+vendored base: `c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`
+
+local files:
+
+- `vendor/libghostty-vt/src/input/function_keys.zig`
+- `vendor/libghostty-vt/src/input/key_encode.zig`
+
+reason: Herdr historically downgrades Ctrl-Tab to Tab for legacy destination
+panes, which cannot distinguish Ctrl-Tab without an extended keyboard protocol.
+Keeping this policy in the single Ghostty pane encoder avoids changing existing
+shell and application behavior during the encoder cutover.
+
+remove when: Herdr intentionally changes its legacy Ctrl-Tab compatibility
+policy, with migration coverage for applications that currently receive Tab.
+
+verification:
+
+```sh
+cd vendor/libghostty-vt && zig build test-lib-vt -Dsimd=true
+just test-one ghostty_ctrl_tab_matches_the_pane_keyboard_protocol
+just test-one keyboard_corpus_survives_fragmentation_and_pane_encoding
+```
+
+## 0006 honor consumed Shift in legacy control keys
+
+status: active
+
+patch: `vendor/patches/libghostty-vt/0006-honor-consumed-shift-in-legacy-control-keys.patch`
+
+herdr issue: https://github.com/herdrdev/herdr/issues/2514
+
+upstream discussion: not opened; this changes proxy-event handling where Herdr
+provides authoritative consumed-modifier metadata
+
+upstream pr: not opened
+
+vendored base: `c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`
+
+local files:
+
+- `vendor/libghostty-vt/src/input/key_encode.zig`
+
+reason: for legacy destinations, a Shift modifier consumed to produce an
+uppercase character must not turn Ctrl-Shift-C into CSI-u instead of the
+traditional Ctrl-C byte. modifyOtherKeys mode 2 still receives every modifier,
+and Kitty panes still preserve Ctrl-Shift as distinct metadata.
+
+remove when: upstream libghostty-vt uses consumed modifier metadata for legacy
+control-sequence selection while preserving modifyOtherKeys and Kitty behavior.
+
+verification:
+
+```sh
+cd vendor/libghostty-vt && zig build test-lib-vt -Dsimd=true
+just test-one retained_selection_copy_shortcut_requires_exact_modifiers
+just test-one keyboard_corpus_survives_fragmentation_and_pane_encoding
+```
