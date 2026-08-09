@@ -39,10 +39,6 @@ pub enum TabBarRightEntryConfig {
     },
 }
 
-pub(crate) fn default_tab_bar_right() -> Vec<TabBarRightEntryConfig> {
-    vec![TabBarRightEntryConfig::Zoom]
-}
-
 pub(crate) fn parse_tab_bar_datetime_format(
     value: &str,
 ) -> Result<time::format_description::OwnedFormatItem, String> {

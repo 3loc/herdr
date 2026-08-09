@@ -1806,7 +1806,7 @@ impl AppState {
             show_agent_labels_on_pane_borders: false,
             hide_tab_bar_when_single_tab: false,
             tab_bar_position: TabBarPositionConfig::Top,
-            tab_bar_right: vec![TabBarStatusSegment::Zoom],
+            tab_bar_right: Vec::new(),
             tab_bar_right_separator: " ".into(),
             pane_history_persistence: false,
             reveal_hidden_cursor_for_cjk_ime: false,

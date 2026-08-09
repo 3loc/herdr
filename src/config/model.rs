@@ -4,9 +4,9 @@ use crossterm::event::KeyModifiers;
 use serde::{de, Deserialize, Deserializer, Serialize};
 
 use super::{
-    default_tab_bar_right, ActionKeybinds, BindingConfig, CommandKeybindConfig, IndexedKeybind,
-    Keybinds, SidebarConfig, SoundConfig, TabBarRightEntryConfig, ThemeConfig,
-    DEFAULT_MOBILE_WIDTH_THRESHOLD, DEFAULT_MOUSE_SCROLL_LINES, DEFAULT_SCROLLBACK_LIMIT_BYTES,
+    ActionKeybinds, BindingConfig, CommandKeybindConfig, IndexedKeybind, Keybinds, SidebarConfig,
+    SoundConfig, TabBarRightEntryConfig, ThemeConfig, DEFAULT_MOBILE_WIDTH_THRESHOLD,
+    DEFAULT_MOUSE_SCROLL_LINES, DEFAULT_SCROLLBACK_LIMIT_BYTES,
 };
 
 pub const MAX_TOAST_DELAY_SECONDS: u64 = 3600;
@@ -874,7 +874,7 @@ pub struct UiConfig {
     pub hide_tab_bar_when_single_tab: bool,
     /// Desktop tab row placement. Default: top.
     pub tab_bar_position: TabBarPositionConfig,
-    /// Ordered entries shown at the right edge of the desktop tab row. Default: zoom.
+    /// Ordered entries shown at the right edge of the desktop tab row. Empty by default.
     pub tab_bar_right: Vec<TabBarRightEntryConfig>,
     /// Text inserted between visible right-side tab bar entries. Default: one space.
     pub tab_bar_right_separator: String,
@@ -1092,7 +1092,7 @@ impl Default for UiConfig {
             show_agent_labels_on_pane_borders: false,
             hide_tab_bar_when_single_tab: false,
             tab_bar_position: TabBarPositionConfig::Top,
-            tab_bar_right: default_tab_bar_right(),
+            tab_bar_right: Vec::new(),
             tab_bar_right_separator: " ".into(),
             agent_panel_sort: AgentPanelSortConfig::Spaces,
             _legacy_agent_panel_scope: None,
@@ -1350,10 +1350,7 @@ status_indicators = "symbols"
             default_config.ui.tab_bar_position,
             TabBarPositionConfig::Top
         );
-        assert_eq!(
-            default_config.ui.tab_bar_right,
-            vec![TabBarRightEntryConfig::Zoom]
-        );
+        assert!(default_config.ui.tab_bar_right.is_empty());
         assert_eq!(default_config.ui.tab_bar_right_separator, " ");
 
         let toml = r#"
