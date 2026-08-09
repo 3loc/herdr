@@ -64,6 +64,11 @@ impl App {
                 results,
                 cache_updates,
             } => self.handle_git_status_refreshed(results, cache_updates),
+            AppEvent::TabBarCommandFinished {
+                generation,
+                segment_index,
+                result,
+            } => self.handle_tab_bar_command_finished(generation, segment_index, result),
             ev @ AppEvent::TerminalBell { .. } => {
                 self.handle_internal_event(ev);
                 false
@@ -150,7 +155,7 @@ impl App {
             result,
         } = ev
         {
-            self.handle_tab_bar_command_finished(generation, segment_index, result);
+            let _ = self.handle_tab_bar_command_finished(generation, segment_index, result);
             return;
         }
 

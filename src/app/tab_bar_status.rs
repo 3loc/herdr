@@ -174,16 +174,16 @@ impl App {
         generation: u64,
         segment_index: usize,
         result: Result<Option<String>, String>,
-    ) {
+    ) -> bool {
         if generation != self.tab_bar_status_generation {
-            return;
+            return false;
         }
         let Some(runtime) = self
             .tab_bar_commands
             .iter_mut()
             .find(|runtime| runtime.segment_index == segment_index)
         else {
-            return;
+            return false;
         };
         runtime.task = None;
 
@@ -194,11 +194,14 @@ impl App {
                 None
             }
         };
-        if let Some(TabBarStatusSegment::Text(current)) =
+        let Some(TabBarStatusSegment::Text(current)) =
             self.state.tab_bar_right.get_mut(segment_index)
-        {
-            *current = output;
-        }
+        else {
+            return false;
+        };
+        let changed = *current != output;
+        *current = output;
+        changed
     }
 }
 

@@ -2352,6 +2352,37 @@ mod tests {
     }
 
     #[test]
+    fn tab_bar_command_events_render_only_when_visible_output_changes() {
+        if !crate::platform::status_commands_supported() {
+            return;
+        }
+
+        let mut app = test_app();
+        app.configure_tab_bar_status(
+            &[crate::config::TabBarRightEntryConfig::Command {
+                command: "status".into(),
+                interval_seconds: 5,
+                timeout_seconds: 2,
+            }],
+            " ",
+        );
+        let generation = app.tab_bar_status_generation;
+        let event = |generation, output: Option<&str>| AppEvent::TabBarCommandFinished {
+            generation,
+            segment_index: 0,
+            result: Ok(output.map(str::to_string)),
+        };
+
+        assert!(!app.handle_internal_event_with_prefix_sync(event(generation, None)));
+        assert!(app.handle_internal_event_with_prefix_sync(event(generation, Some("ready"))));
+        assert!(!app.handle_internal_event_with_prefix_sync(event(generation, Some("ready"))));
+        assert!(!app.handle_internal_event_with_prefix_sync(event(
+            generation.wrapping_add(1),
+            Some("stale"),
+        )));
+    }
+
+    #[test]
     fn git_status_event_clears_in_flight_refresh() {
         let mut app = test_app();
         app.git_refresh_in_flight = true;
