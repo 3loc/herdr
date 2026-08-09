@@ -75,6 +75,7 @@ mod logging;
 mod metadata_tokens;
 mod noninteractive_process;
 mod pane;
+mod pane_graphics_files;
 mod persist;
 mod platform;
 mod plugin_command;
@@ -93,6 +94,7 @@ mod server;
 mod session;
 mod sound;
 mod terminal;
+mod terminal_effects;
 mod terminal_modes;
 mod terminal_notify;
 mod terminal_theme;
@@ -304,6 +306,10 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 
 # Draw borders around split panes.
 # pane_borders = true
+
+# Draw borders along the outside edge of the pane area.
+# Disable for tmux-style internal splitters without an outside frame.
+# pane_outer_borders = true
 
 # Draw interactive scrollbars beside terminal panes.
 # Set false to reclaim the scrollbar column and keep it out of terminal-native selections.
