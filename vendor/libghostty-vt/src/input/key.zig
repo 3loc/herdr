@@ -47,6 +47,12 @@ pub const KeyEvent = struct {
     /// shift+a is "A" in UTF-8 but unshifted would provide 'a'.
     unshifted_codepoint: u21 = 0,
 
+    /// Explicit Kitty shifted alternate supplied by a terminal proxy.
+    shifted_codepoint: u21 = 0,
+
+    /// Explicit Kitty base-layout alternate supplied by a terminal proxy.
+    base_layout_codepoint: u21 = 0,
+
     /// Returns the effective modifiers for this event. The effective
     /// modifiers are the mods that should be considered for keybindings.
     pub fn effectiveMods(self: KeyEvent) Mods {

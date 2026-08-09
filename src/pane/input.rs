@@ -33,6 +33,12 @@ pub(super) fn ghostty_key_event_from_terminal_key(
     if let Some(codepoint) = ghostty_unshifted_codepoint(key) {
         event.set_unshifted_codepoint(codepoint);
     }
+    if let Some(codepoint) = key.shifted_codepoint {
+        event.set_shifted_codepoint(codepoint);
+    }
+    if let Some(codepoint) = key.base_layout_codepoint {
+        event.set_base_layout_codepoint(codepoint);
+    }
 
     Some(event)
 }
@@ -54,6 +60,12 @@ pub(super) fn ghostty_mods_from_key_modifiers(modifiers: crossterm::event::KeyMo
     }
     if modifiers.contains(crossterm::event::KeyModifiers::SUPER) {
         ghostty_mods |= crate::ghostty::MOD_SUPER;
+    }
+    if modifiers.contains(crossterm::event::KeyModifiers::HYPER) {
+        ghostty_mods |= crate::ghostty::MOD_HYPER;
+    }
+    if modifiers.contains(crossterm::event::KeyModifiers::META) {
+        ghostty_mods |= crate::ghostty::MOD_META;
     }
     ghostty_mods
 }

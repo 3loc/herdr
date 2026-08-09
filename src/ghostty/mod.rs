@@ -138,6 +138,8 @@ pub const MOD_SHIFT: u16 = ffi::GHOSTTY_MODS_SHIFT as u16;
 pub const MOD_CTRL: u16 = ffi::GHOSTTY_MODS_CTRL as u16;
 pub const MOD_ALT: u16 = ffi::GHOSTTY_MODS_ALT as u16;
 pub const MOD_SUPER: u16 = ffi::GHOSTTY_MODS_SUPER as u16;
+pub const MOD_HYPER: u16 = ffi::GHOSTTY_MODS_HYPER as u16;
+pub const MOD_META: u16 = ffi::GHOSTTY_MODS_META as u16;
 
 pub const KEY_ENTER: u32 = ffi::GhosttyKey_GHOSTTY_KEY_ENTER;
 pub const KEY_UP: u32 = ffi::GhosttyKey_GHOSTTY_KEY_ARROW_UP;
@@ -2596,6 +2598,14 @@ impl KeyEvent {
 
     pub fn set_unshifted_codepoint(&mut self, codepoint: u32) {
         unsafe { ffi::ghostty_key_event_set_unshifted_codepoint(self.raw, codepoint) }
+    }
+
+    pub fn set_shifted_codepoint(&mut self, codepoint: u32) {
+        unsafe { ffi::ghostty_key_event_set_shifted_codepoint(self.raw, codepoint) }
+    }
+
+    pub fn set_base_layout_codepoint(&mut self, codepoint: u32) {
+        unsafe { ffi::ghostty_key_event_set_base_layout_codepoint(self.raw, codepoint) }
     }
 }
 

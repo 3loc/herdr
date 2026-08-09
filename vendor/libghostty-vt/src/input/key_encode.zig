@@ -287,6 +287,20 @@ fn kitty(
                     if (base != seq.key) seq.alternates[1] = base;
                 }
             }
+
+            // Terminal proxies may know alternates that cannot be recovered
+            // from physical identity or multi-codepoint generated text.
+            if (event.shifted_codepoint > 0 and
+                event.shifted_codepoint != seq.key and
+                seq.mods.shift)
+            {
+                seq.alternates[0] = event.shifted_codepoint;
+            }
+            if (event.base_layout_codepoint > 0 and
+                event.base_layout_codepoint != seq.key)
+            {
+                seq.alternates[1] = event.base_layout_codepoint;
+            }
         }
 
         if (opts.kitty_flags.report_associated and
@@ -918,6 +932,8 @@ const KittyMods = packed struct(u8) {
             .alt = mods.alt,
             .ctrl = mods.ctrl,
             .super = mods.super,
+            .hyper = mods.hyper,
+            .meta = mods.meta,
             .caps_lock = mods.caps_lock,
             .num_lock = mods.num_lock,
         };

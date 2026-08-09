@@ -118,6 +118,10 @@ legacy_backspace_backarrow	7f	backspace	-	press		-	backarrow	08
 kitty_keypad_1_application_keypad_characterized	1b5b35373430303b3175	char:1	-	press		-	application_keypad	31
 kitty_ctrl_a_legacy	1b5b39373b3575	char:a	control	press		-	legacy	01
 kitty_ctrl_a_kitty_1	1b5b39373b3575	char:a	control	press		-	kitty_1	1b5b39373b3575
+kitty_hyper_a_kitty_1	1b5b39373b313775	char:a	hyper	press		-	kitty_1	1b5b39373b313775
+kitty_meta_a_kitty_1	1b5b39373b333375	char:a	meta	press		-	kitty_1	1b5b39373b333375
+kitty_hyper_enter_kitty_1	1b5b31333b313775	enter	hyper	press		-	kitty_1	1b5b31333b313775
+kitty_meta_enter_kitty_1	1b5b31333b333375	enter	meta	press		-	kitty_1	1b5b31333b333375
 kitty_repeat_a_kitty_11	1b5b39373b313a3275	char:a	-	repeat		-	kitty_11	1b5b39373b313a3275
 kitty_super_a_kitty_31	1b5b39373b3975	char:a	super	press		-	kitty_31	1b5b39373b393a3175
 kitty_hyper_a_kitty_31	1b5b39373b313775	char:a	hyper	press		-	kitty_31	1b5b39373b31373a3175

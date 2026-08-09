@@ -67,6 +67,8 @@ pub const GHOSTTY_MODS_ALT: u32 = 4;
 pub const GHOSTTY_MODS_SUPER: u32 = 8;
 pub const GHOSTTY_MODS_CAPS_LOCK: u32 = 16;
 pub const GHOSTTY_MODS_NUM_LOCK: u32 = 32;
+pub const GHOSTTY_MODS_HYPER: u32 = 1024;
+pub const GHOSTTY_MODS_META: u32 = 2048;
 pub const GHOSTTY_MODS_SHIFT_SIDE: u32 = 64;
 pub const GHOSTTY_MODS_CTRL_SIDE: u32 = 128;
 pub const GHOSTTY_MODS_ALT_SIDE: u32 = 256;
@@ -3890,6 +3892,18 @@ unsafe extern "C" {
 unsafe extern "C" {
     #[doc = " Set the unshifted Unicode codepoint.\n\n @param event The key event handle, must not be NULL\n @param codepoint The unshifted Unicode codepoint to set\n\n @ingroup key"]
     pub fn ghostty_key_event_set_unshifted_codepoint(event: GhosttyKeyEvent, codepoint: u32);
+}
+unsafe extern "C" {
+    pub fn ghostty_key_event_set_shifted_codepoint(event: GhosttyKeyEvent, codepoint: u32);
+}
+unsafe extern "C" {
+    pub fn ghostty_key_event_get_shifted_codepoint(event: GhosttyKeyEvent) -> u32;
+}
+unsafe extern "C" {
+    pub fn ghostty_key_event_set_base_layout_codepoint(event: GhosttyKeyEvent, codepoint: u32);
+}
+unsafe extern "C" {
+    pub fn ghostty_key_event_get_base_layout_codepoint(event: GhosttyKeyEvent) -> u32;
 }
 unsafe extern "C" {
     #[doc = " Get the unshifted Unicode codepoint.\n\n @param event The key event handle, must not be NULL\n @return The unshifted Unicode codepoint\n\n @ingroup key"]

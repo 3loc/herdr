@@ -68,6 +68,10 @@ typedef uint16_t GhosttyMods;
 #define GHOSTTY_MODS_CAPS_LOCK (1 << 4)
 /** Num Lock is active */
 #define GHOSTTY_MODS_NUM_LOCK (1 << 5)
+/** Hyper key is pressed */
+#define GHOSTTY_MODS_HYPER (1 << 10)
+/** Meta key is pressed */
+#define GHOSTTY_MODS_META (1 << 11)
 
 /**
  * Right shift is pressed (0 = left, 1 = right).
@@ -478,5 +482,17 @@ GHOSTTY_API void ghostty_key_event_set_unshifted_codepoint(GhosttyKeyEvent event
  * @ingroup key
  */
 GHOSTTY_API uint32_t ghostty_key_event_get_unshifted_codepoint(GhosttyKeyEvent event);
+
+/** Set an explicit Kitty shifted alternate codepoint. */
+GHOSTTY_API void ghostty_key_event_set_shifted_codepoint(GhosttyKeyEvent event, uint32_t codepoint);
+
+/** Get the explicit Kitty shifted alternate codepoint, or zero when absent. */
+GHOSTTY_API uint32_t ghostty_key_event_get_shifted_codepoint(GhosttyKeyEvent event);
+
+/** Set an explicit Kitty base-layout alternate codepoint. */
+GHOSTTY_API void ghostty_key_event_set_base_layout_codepoint(GhosttyKeyEvent event, uint32_t codepoint);
+
+/** Get the explicit Kitty base-layout alternate codepoint, or zero when absent. */
+GHOSTTY_API uint32_t ghostty_key_event_get_base_layout_codepoint(GhosttyKeyEvent event);
 
 #endif /* GHOSTTY_VT_KEY_EVENT_H */
