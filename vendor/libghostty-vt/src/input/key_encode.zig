@@ -423,7 +423,11 @@ fn legacy(
     // alt-prefix handling of unshifted codepoints... so we process that.
     const utf8 = event.utf8;
     if (utf8.len == 0) {
-        if (try legacyAltPrefix(
+        if (opts.proxy_events and proxyAltPrefixEnabled(binding_mods, opts)) {
+            if (std.math.cast(u8, event.unshifted_codepoint)) |byte| {
+                try writer.print("\x1B{c}", .{byte});
+            }
+        } else if (try legacyAltPrefix(
             event,
             binding_mods,
             all_mods,
@@ -2059,6 +2063,20 @@ test "legacy: ctrl+alt+c" {
         .utf8 = "c",
     }, .{});
     try testing.expectEqualStrings("\x1b\x03", writer.buffered());
+}
+
+test "legacy: proxy alt without generated text ignores host option policy" {
+    var buf: [128]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
+    try legacy(&writer, .{
+        .key = .key_c,
+        .mods = .{ .alt = true },
+        .unshifted_codepoint = 'c',
+    }, .{
+        .alt_esc_prefix = true,
+        .proxy_events = true,
+    });
+    try testing.expectEqualStrings("\x1bc", writer.buffered());
 }
 
 test "legacy: proxy super preserves semantic text" {
