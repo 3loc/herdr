@@ -4593,6 +4593,23 @@ mod tests {
     }
 
     #[test]
+    fn ghostty_kitty_pane_preserves_legacy_ctrl_alt_letter() {
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx.clone()).unwrap();
+        let pane_id = PaneId::from_raw(1);
+        pane.process_pty_bytes(pane_id, 0, b"\x1b[>5u", &tx);
+
+        let mut events = crate::raw_input::parse_raw_input_bytes_sync(b"\x1b\x06");
+        let crate::raw_input::RawInputEvent::Key(key) = events.remove(0) else {
+            panic!("expected key event");
+        };
+        let encoded = pane.encode_terminal_key(key, pane.keyboard_protocol().unwrap());
+
+        assert_eq!(encoded, b"\x1b[102;7u");
+    }
+
+    #[test]
     fn ghostty_pane_characterizes_ctrl_backspace_encoding() {
         let (tx, _rx) = mpsc::channel(4);
         let legacy = GhosttyPaneTerminal::new(
