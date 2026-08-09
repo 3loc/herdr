@@ -3486,6 +3486,7 @@ mod tests {
                 mouse_protocol_encoding: crate::input::MouseProtocolEncoding::Sgr,
                 mouse_alternate_scroll: true,
                 modify_other_keys: true,
+                modify_other_keys_mode: Some(crate::input::ModifyOtherKeysMode::Mode2),
                 color_scheme_reporting: true,
             })
         );

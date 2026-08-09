@@ -100,6 +100,8 @@ kitty_functional_home	1b5b35373432333b3175	home	-	press		-	legacy	1b5b48
 legacy_up_application_cursor	1b5b41	up	-	press		-	application_cursor	1b4f41
 kitty_shift_enter_modify_other_keys_1	1b5b31333b3275	enter	shift	press		-	modify_other_keys_1	1b5b32373b323b31337e
 kitty_shift_enter_modify_other_keys_2	1b5b31333b3275	enter	shift	press		-	modify_other_keys_2	1b5b32373b323b31337e
+kitty_shift_backspace_modify_other_keys_1	1b5b3132373b3275	backspace	shift	press		-	modify_other_keys_1	7f
+kitty_shift_backspace_modify_other_keys_2	1b5b3132373b3275	backspace	shift	press		-	modify_other_keys_2	1b5b32373b323b3132377e
 legacy_alt_backspace_kitty_1	1b7f	backspace	alt	press		-	kitty_1	1b5b3132373b3375
 kitty_release_letter_kitty_3	1b5b3130383a37363b323a3375	char:l	shift	release	76	-	kitty_3	1b5b3130383b323a3375
 kitty_shift_letter_kitty_7	1b5b3130383a37363b323a3175	char:l	shift	press	76	-	kitty_7	4c
