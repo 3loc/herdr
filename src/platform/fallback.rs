@@ -97,6 +97,16 @@ pub(crate) fn local_datetime() -> Option<time::PrimitiveDateTime> {
     None
 }
 
+pub(crate) fn configure_status_command(_process: &mut std::process::Command) {}
+
+pub(crate) struct StatusCommandGuard;
+
+impl StatusCommandGuard {
+    pub(crate) fn new(_child: &tokio::process::Child) -> std::io::Result<Self> {
+        Ok(Self)
+    }
+}
+
 fn raw_command_argv(command: &str, flag: &str) -> Vec<std::ffi::OsString> {
     vec!["/bin/sh".into(), flag.into(), command.into()]
 }

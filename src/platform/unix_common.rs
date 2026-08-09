@@ -147,6 +147,41 @@ pub(crate) fn local_datetime() -> Option<time::PrimitiveDateTime> {
     datetime_from_tm(&local)
 }
 
+pub(crate) fn configure_status_command(process: &mut std::process::Command) {
+    use std::os::unix::process::CommandExt;
+
+    process.process_group(0);
+}
+
+pub(crate) struct StatusCommandGuard {
+    process_group_id: Option<i32>,
+}
+
+impl StatusCommandGuard {
+    pub(crate) fn new(child: &tokio::process::Child) -> std::io::Result<Self> {
+        let process_id = child
+            .id()
+            .ok_or_else(|| std::io::Error::other("status command has no process id"))?;
+        let process_group_id = i32::try_from(process_id)
+            .map_err(|_| std::io::Error::other("status command process id exceeds i32"))?;
+        Ok(Self {
+            process_group_id: Some(process_group_id),
+        })
+    }
+}
+
+impl Drop for StatusCommandGuard {
+    fn drop(&mut self) {
+        if let Some(process_group_id) = self.process_group_id.take() {
+            // The command was spawned as this process group's leader. Killing the
+            // group also cleans up background descendants on completion/cancellation.
+            unsafe {
+                libc::kill(-process_group_id, libc::SIGKILL);
+            }
+        }
+    }
+}
+
 fn datetime_from_tm(value: &libc::tm) -> Option<time::PrimitiveDateTime> {
     let month = time::Month::try_from(u8::try_from(value.tm_mon + 1).ok()?).ok()?;
     let date = time::Date::from_calendar_date(
