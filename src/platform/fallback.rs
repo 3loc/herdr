@@ -97,6 +97,10 @@ pub(crate) fn local_datetime() -> Option<time::PrimitiveDateTime> {
     None
 }
 
+pub(crate) fn status_commands_supported() -> bool {
+    false
+}
+
 pub(crate) fn configure_status_command(_process: &mut std::process::Command) {}
 
 pub(crate) struct StatusCommandGuard;

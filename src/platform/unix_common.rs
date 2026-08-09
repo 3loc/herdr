@@ -147,6 +147,10 @@ pub(crate) fn local_datetime() -> Option<time::PrimitiveDateTime> {
     datetime_from_tm(&local)
 }
 
+pub(crate) fn status_commands_supported() -> bool {
+    true
+}
+
 pub(crate) fn configure_status_command(process: &mut std::process::Command) {
     use std::os::unix::process::CommandExt;
 

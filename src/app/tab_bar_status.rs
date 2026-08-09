@@ -83,7 +83,8 @@ impl App {
                     interval_seconds,
                     timeout_seconds,
                 } => {
-                    if command.trim().is_empty()
+                    if !crate::platform::status_commands_supported()
+                        || command.trim().is_empty()
                         || *interval_seconds == 0
                         || *interval_seconds > crate::config::MAX_TAB_BAR_COMMAND_INTERVAL_SECONDS
                         || *timeout_seconds == 0

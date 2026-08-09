@@ -430,6 +430,10 @@ pub(crate) fn detached_custom_command_process_platform(command: &str) -> std::pr
     detached_custom_command_process_with_comspec(command, std::env::var_os("ComSpec"))
 }
 
+pub(crate) fn status_commands_supported() -> bool {
+    true
+}
+
 pub(crate) fn configure_status_command(process: &mut std::process::Command) {
     use std::os::windows::process::CommandExt;
 
