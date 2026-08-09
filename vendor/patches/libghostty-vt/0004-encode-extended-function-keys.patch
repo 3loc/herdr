@@ -46,12 +46,13 @@ index 66ab4bc4..b1a0f0a5 100644
  
      // Keypad keys
      result.set(.numpad_0, kpKeys("p"));
-@@ -294,6 +307,24 @@ fn pcStyle(comptime fmt: []const u8) []Entry {
+@@ -294,6 +307,25 @@ fn pcStyle(comptime fmt: []const u8) []Entry {
      }
  }
  
 +fn pcStyleWithImplicitMods(comptime fmt: []const u8, comptime implicit: key.Mods) []Entry {
 +    comptime {
++        @setEvalBranchQuota(500_000);
 +        var entries: [modifiers.len]Entry = undefined;
 +        for (modifiers, 0..) |mods, i| {
 +            const code: u8 = 1 +

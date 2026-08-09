@@ -5,6 +5,8 @@ mod parse;
 #[cfg(test)]
 pub(crate) mod test_support;
 
+// Preserve mouse encoder re-exports for facade consumers even though Herdr's
+// runtime routes mouse encoding through terminal backends.
 #[allow(unused_imports)]
 pub use encode::{encode_mouse_button, encode_mouse_scroll};
 #[cfg(not(windows))]

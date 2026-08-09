@@ -2184,25 +2184,30 @@ impl GhosttyPaneTerminal {
 }
 
 fn log_key_encoding_unavailable(reason: KeyEncodingUnavailable) {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicU64, Ordering};
 
-    static EVENT_ALLOCATION_LOGGED: AtomicBool = AtomicBool::new(false);
-    static ENCODER_LOCK_LOGGED: AtomicBool = AtomicBool::new(false);
-    static ENCODER_ERROR_LOGGED: AtomicBool = AtomicBool::new(false);
+    const LOG_INTERVAL: u64 = 1024;
+    static EVENT_ALLOCATION_FAILURES: AtomicU64 = AtomicU64::new(0);
+    static ENCODER_LOCK_FAILURES: AtomicU64 = AtomicU64::new(0);
+    static ENCODER_ERROR_FAILURES: AtomicU64 = AtomicU64::new(0);
 
-    let first_failure = match reason {
+    let failures = match reason {
         KeyEncodingUnavailable::Adapter(GhosttyKeyEventAdapterError::UnsupportedKey) => {
             debug!(?reason, "Ghostty key encoding unavailable; suppressing key");
             return;
         }
         KeyEncodingUnavailable::Adapter(GhosttyKeyEventAdapterError::EventAllocation) => {
-            &EVENT_ALLOCATION_LOGGED
+            &EVENT_ALLOCATION_FAILURES
         }
-        KeyEncodingUnavailable::EncoderLockPoisoned => &ENCODER_LOCK_LOGGED,
-        KeyEncodingUnavailable::EncoderError => &ENCODER_ERROR_LOGGED,
+        KeyEncodingUnavailable::EncoderLockPoisoned => &ENCODER_LOCK_FAILURES,
+        KeyEncodingUnavailable::EncoderError => &ENCODER_ERROR_FAILURES,
     };
-    if !first_failure.swap(true, Ordering::Relaxed) {
-        error!(?reason, "Ghostty key encoding failed; suppressing key");
+    let count = failures.fetch_add(1, Ordering::Relaxed) + 1;
+    if count == 1 || count.is_multiple_of(LOG_INTERVAL) {
+        error!(
+            ?reason,
+            count, "Ghostty key encoding failed; suppressing key"
+        );
     }
 }
 

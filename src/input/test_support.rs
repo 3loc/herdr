@@ -60,7 +60,7 @@ pub(crate) fn keyboard_corpus_cases(corpus: &str) -> Vec<KeyboardCorpusCase<'_>>
                     .get(9)
                     .filter(|field| !field.is_empty())
                     .map(|field| field.parse::<u32>().expect("base layout codepoint")),
-                generated_text: (columns[6] != "-").then(|| {
+                generated_text: (!columns[6].is_empty() && columns[6] != "-").then(|| {
                     String::from_utf8(decode_hex(columns[6])).expect("generated text must be UTF-8")
                 }),
                 pane_profile: columns[7],
@@ -143,4 +143,12 @@ fn parse_kind(value: &str) -> KeyEventKind {
         "release" => KeyEventKind::Release,
         other => panic!("unsupported fixture kind: {other}"),
     }
+}
+
+#[test]
+fn blank_generated_text_fixture_field_is_absent() {
+    let cases = keyboard_corpus_cases("legacy\t61\tchar:a\t-\tpress\t\t\tlegacy\t61");
+
+    assert_eq!(cases.len(), 1);
+    assert_eq!(cases[0].generated_text, None);
 }

@@ -1334,8 +1334,12 @@ fn discard_oversized_csi_tail(buffer: &mut Vec<u8>) -> bool {
     for (index, byte) in buffer.iter().copied().enumerate() {
         match byte {
             0x20..=0x3f => {}
-            _ => {
+            0x40..=0x7e => {
                 buffer.drain(..=index);
+                return true;
+            }
+            _ => {
+                buffer.drain(..index);
                 return true;
             }
         }
@@ -2567,7 +2571,18 @@ mod tests {
     }
 
     #[test]
-    fn oversized_csi_discard_precedes_excess_escape_batching() {
+    fn oversized_csi_discard_preserves_a_following_escape_sequence() {
+        let mut framer = RawInputByteFramer::default();
+        let mut oversized = b"\x1b[".to_vec();
+        oversized.extend(std::iter::repeat_n(b'1', MAX_CSI_SEQUENCE_BYTES));
+        assert!(framer.push(&oversized).is_empty());
+
+        assert_eq!(framer.push(b"\x1b[A"), vec![b"\x1b[A".to_vec()]);
+        assert!(!framer.has_pending_input());
+    }
+
+    #[test]
+    fn oversized_csi_discard_preserves_excess_escape_batching() {
         let mut framer = RawInputByteFramer::default();
         let mut oversized = b"\x1b[".to_vec();
         oversized.extend(std::iter::repeat_n(b'1', MAX_CSI_SEQUENCE_BYTES));
@@ -2581,7 +2596,7 @@ mod tests {
             .flatten()
             .collect::<Vec<_>>();
 
-        assert_eq!(rebuilt, continuation[1..]);
+        assert_eq!(rebuilt, continuation);
         assert!(!framer.has_pending_input());
         assert!(framer.discard_until.is_none());
     }

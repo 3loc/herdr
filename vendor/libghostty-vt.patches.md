@@ -135,7 +135,10 @@ reason: libghostty-vt models F13-F25 but its legacy encoder has no entries for
 them, silently suppressing keys that Herdr receives through Kitty input. The
 extension uses the standard xterm/terminfo sequences, corrects modified F3 to
 that same standard, and composes additional modifiers with each extended key's
-implicit Shift or Control modifier.
+implicit Shift or Control modifier. Modified F3 therefore shares the
+`CSI 1;modifier R` byte shape used by a cursor position report, but terminal
+input and terminal responses travel in opposite directions and are interpreted
+in that context.
 
 remove when: upstream libghostty-vt encodes F13-F25 in legacy mode with the
 standard xterm sequences and modifier composition, and emits the standard
@@ -206,8 +209,10 @@ local files:
 
 reason: for legacy destinations, a Shift modifier consumed to produce an
 uppercase character must not turn Ctrl-Shift-C into CSI-u instead of the
-traditional Ctrl-C byte. modifyOtherKeys mode 2 still receives every modifier,
-and Kitty panes still preserve Ctrl-Shift as distinct metadata.
+traditional Ctrl-C byte. That legacy protocol cannot reliably preserve the
+physical Shift after it produced uppercase text. modifyOtherKeys mode 2 still
+receives every modifier, and Kitty panes still preserve Ctrl-Shift as distinct
+metadata.
 
 remove when: upstream libghostty-vt uses consumed modifier metadata for legacy
 control-sequence selection while preserving modifyOtherKeys and Kitty behavior.

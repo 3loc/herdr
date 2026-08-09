@@ -309,6 +309,7 @@ fn pcStyle(comptime fmt: []const u8) []Entry {
 
 fn pcStyleWithImplicitMods(comptime fmt: []const u8, comptime implicit: key.Mods) []Entry {
     comptime {
+        @setEvalBranchQuota(500_000);
         var entries: [modifiers.len]Entry = undefined;
         for (modifiers, 0..) |mods, i| {
             const code: u8 = 1 +

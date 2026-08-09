@@ -117,6 +117,24 @@ index 35e1c103..d89e2674 100644
          };
      }
  
+@@ -159,9 +163,17 @@ pub const Mods = packed struct(Mods.Backing) {
+     // For our own understanding
+     test {
+         const testing = std.testing;
+         try testing.expectEqual(@as(Backing, @bitCast(Mods{})), @as(Backing, 0b0));
+         try testing.expectEqual(
+             @as(Backing, @bitCast(Mods{ .shift = true })),
+             @as(Backing, 0b0000_0001),
+         );
++        try testing.expectEqual(
++            @as(Backing, @bitCast(Mods{ .hyper = true })),
++            @as(Backing, 1 << 10),
++        );
++        try testing.expectEqual(
++            @as(Backing, @bitCast(Mods{ .meta = true })),
++            @as(Backing, 1 << 11),
++        );
+     }
 diff --git a/vendor/libghostty-vt/src/lib_vt.zig b/vendor/libghostty-vt/src/lib_vt.zig
 index e01cdbb8..096f1a87 100644
 --- a/vendor/libghostty-vt/src/lib_vt.zig

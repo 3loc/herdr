@@ -29,7 +29,7 @@ fn parse_kitty_key_sequence(data: &str) -> Option<TerminalKey> {
         modifier_part
     };
     let (modifier_text, event_type) = split_modifier_and_event(modifier_part);
-    let modifier = modifier_text.parse::<u8>().ok()?.checked_sub(1)?;
+    let modifier = u8::try_from(modifier_text.parse::<u16>().ok()?.checked_sub(1)?).ok()?;
 
     let mut key_fields = key_part.split(':');
     let codepoint = key_fields.next()?.parse::<u32>().ok()?;
@@ -626,6 +626,21 @@ mod tests {
         assert_eq!(parse_terminal_key_sequence("\x1b[11;2~"), None);
         assert_eq!(parse_terminal_key_sequence("\x1b[14;1~"), None);
         assert_eq!(parse_terminal_key_sequence("\x1b[14;3~"), None);
+    }
+
+    #[test]
+    fn parse_kitty_sequence_accepts_every_modifier_bit() {
+        let key = parse_terminal_key_sequence("\x1b[97;256u").unwrap();
+
+        assert_eq!(
+            key.modifiers,
+            KeyModifiers::SHIFT
+                | KeyModifiers::ALT
+                | KeyModifiers::CONTROL
+                | KeyModifiers::SUPER
+                | KeyModifiers::HYPER
+                | KeyModifiers::META
+        );
     }
 
     #[test]

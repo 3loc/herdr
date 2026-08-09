@@ -31,7 +31,7 @@ index 4fdea85b..3d386179 100644
          return;
      }
  
-@@ -538,13 +537,26 @@ fn legacy(
+@@ -538,13 +537,27 @@ fn legacy(
  
      // If we have alt-pressed and alt-esc-prefix is enabled, then
      // we need to prefix the utf8 sequence with an esc.
@@ -55,7 +55,8 @@ index 4fdea85b..3d386179 100644
 +                const codepoint = it.nextCodepoint() orelse break :unshifted;
 +                if (it.nextCodepoint() == null and codepoint != event.unshifted_codepoint) {
 +                    var buf: [4]u8 = undefined;
-+                    const len = try std.unicode.utf8Encode(event.unshifted_codepoint, &buf);
++                    const len = std.unicode.utf8Encode(event.unshifted_codepoint, &buf) catch
++                        return try writer.writeAll(utf8);
 +                    return try writer.writeAll(buf[0..len]);
 +                }
 +            }
@@ -147,7 +148,7 @@ index 4fdea85b..3d386179 100644
  test "legacy: ctrl+shift+minus (underscore on US)" {
      var buf: [128]u8 = undefined;
      var writer: std.Io.Writer = .fixed(&buf);
-@@ -2026,6 +2029,37 @@ test "legacy: ctrl+alt+c" {
+@@ -2026,6 +2029,52 @@ test "legacy: ctrl+alt+c" {
      try testing.expectEqualStrings("\x1b\x03", writer.buffered());
  }
  
@@ -159,6 +160,21 @@ index 4fdea85b..3d386179 100644
 +        .mods = .{ .alt = true },
 +        .utf8 = "é",
 +        .unshifted_codepoint = 'é',
++    }, .{
++        .alt_esc_prefix = true,
++        .macos_option_as_alt = .true,
++    });
++    try testing.expectEqualStrings("\x1bé", writer.buffered());
++}
++
++test "legacy: alt with invalid unshifted codepoint preserves utf8 text" {
++    var buf: [128]u8 = undefined;
++    var writer: std.Io.Writer = .fixed(&buf);
++    try legacy(&writer, .{
++        .key = .unidentified,
++        .mods = .{ .alt = true },
++        .utf8 = "é",
++        .unshifted_codepoint = 0xD800,
 +    }, .{
 +        .alt_esc_prefix = true,
 +        .macos_option_as_alt = .true,

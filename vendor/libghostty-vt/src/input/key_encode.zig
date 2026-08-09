@@ -550,7 +550,8 @@ fn legacy(
                 const codepoint = it.nextCodepoint() orelse break :unshifted;
                 if (it.nextCodepoint() == null and codepoint != event.unshifted_codepoint) {
                     var buf: [4]u8 = undefined;
-                    const len = try std.unicode.utf8Encode(event.unshifted_codepoint, &buf);
+                    const len = std.unicode.utf8Encode(event.unshifted_codepoint, &buf) catch
+                        return try writer.writeAll(utf8);
                     return try writer.writeAll(buf[0..len]);
                 }
             }
@@ -2037,6 +2038,21 @@ test "legacy: alt+unicode prefixes the complete utf8 text" {
         .mods = .{ .alt = true },
         .utf8 = "é",
         .unshifted_codepoint = 'é',
+    }, .{
+        .alt_esc_prefix = true,
+        .macos_option_as_alt = .true,
+    });
+    try testing.expectEqualStrings("\x1bé", writer.buffered());
+}
+
+test "legacy: alt with invalid unshifted codepoint preserves utf8 text" {
+    var buf: [128]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
+    try legacy(&writer, .{
+        .key = .unidentified,
+        .mods = .{ .alt = true },
+        .utf8 = "é",
+        .unshifted_codepoint = 0xD800,
     }, .{
         .alt_esc_prefix = true,
         .macos_option_as_alt = .true,

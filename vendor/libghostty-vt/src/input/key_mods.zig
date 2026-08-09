@@ -168,6 +168,14 @@ pub const Mods = packed struct(Mods.Backing) {
             @as(Backing, @bitCast(Mods{ .shift = true })),
             @as(Backing, 0b0000_0001),
         );
+        try testing.expectEqual(
+            @as(Backing, @bitCast(Mods{ .hyper = true })),
+            @as(Backing, 1 << 10),
+        );
+        try testing.expectEqual(
+            @as(Backing, @bitCast(Mods{ .meta = true })),
+            @as(Backing, 1 << 11),
+        );
     }
 
     test "translation macos-option-as-alt" {
