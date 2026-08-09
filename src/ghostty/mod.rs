@@ -2557,13 +2557,17 @@ impl Drop for RenderState {
 
 pub struct KeyEvent {
     raw: ffi::GhosttyKeyEvent,
+    utf8: String,
 }
 
 impl KeyEvent {
     pub fn new() -> Result<Self, Error> {
         let mut raw = ptr::null_mut();
         unsafe { ffi::ghostty_key_event_new(ptr::null(), &mut raw).into_result()? };
-        Ok(Self { raw })
+        Ok(Self {
+            raw,
+            utf8: String::new(),
+        })
     }
 
     pub fn set_action(&mut self, action: ffi::GhosttyKeyAction) {
@@ -2579,9 +2583,15 @@ impl KeyEvent {
     }
 
     pub fn set_utf8(&mut self, text: &str) {
-        unsafe {
-            ffi::ghostty_key_event_set_utf8(self.raw, text.as_ptr().cast::<c_char>(), text.len())
-        }
+        self.utf8.clear();
+        self.utf8.push_str(text);
+        let bytes = self.utf8.as_bytes();
+        let data = if bytes.is_empty() {
+            ptr::null()
+        } else {
+            bytes.as_ptr().cast::<c_char>()
+        };
+        unsafe { ffi::ghostty_key_event_set_utf8(self.raw, data, bytes.len()) }
     }
 
     pub fn set_unshifted_codepoint(&mut self, codepoint: u32) {
@@ -3564,6 +3574,16 @@ mod tests {
         assert!(!output.is_empty());
         assert!(String::from_utf8_lossy(&output).contains("R"));
         assert_eq!(terminal.take_pwd_changes(), [b"file:///tmp/herdr".to_vec()]);
+    }
+
+    #[test]
+    fn key_event_retains_utf8_text_for_its_lifetime() {
+        let mut event = KeyEvent::new().unwrap();
+        let text = String::from("A");
+        event.set_utf8(&text);
+        drop(text);
+
+        assert_eq!(event.utf8, "A");
     }
 
     #[test]
