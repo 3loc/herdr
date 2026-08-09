@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- `ui.tab_bar_hostname = true` now shows the machine hostname at the right edge of the desktop tab bar; remote sessions show the remote machine's hostname.
 - The desktop tab bar now shows a right-aligned ZOOM indicator while the focused pane is zoomed.
 - Optional `keys.resize_pane_left`, `keys.resize_pane_down`, `keys.resize_pane_up`, and `keys.resize_pane_right` bindings now resize the focused pane in one keystroke without entering resize mode.
 - Devin CLI, Cursor Agent CLI, MastraCode, Hermes Agent, and Grok CLI integrations now install and run natively on Windows.
