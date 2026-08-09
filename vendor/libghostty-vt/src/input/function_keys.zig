@@ -115,6 +115,16 @@ pub const keys = keys: {
     result.set(.f23, pcStyleWithImplicitMods("\x1b[23;{}~", .{ .shift = true }) ++ .{Entry{ .mods_empty_is_any = false, .sequence = "\x1b[23;2~" }});
     result.set(.f24, pcStyleWithImplicitMods("\x1b[24;{}~", .{ .shift = true }) ++ .{Entry{ .mods_empty_is_any = false, .sequence = "\x1b[24;2~" }});
     result.set(.f25, pcStyleWithImplicitMods("\x1b[1;{}P", .{ .ctrl = true }) ++ .{Entry{ .mods_empty_is_any = false, .sequence = "\x1b[1;5P" }});
+    result.set(.f26, pcStyleWithImplicitMods("\x1b[1;{}Q", .{ .ctrl = true }) ++ .{Entry{ .mods_empty_is_any = false, .sequence = "\x1b[1;5Q" }});
+    result.set(.f27, pcStyleWithImplicitMods("\x1b[1;{}R", .{ .ctrl = true }) ++ .{Entry{ .mods_empty_is_any = false, .sequence = "\x1b[1;5R" }});
+    result.set(.f28, pcStyleWithImplicitMods("\x1b[1;{}S", .{ .ctrl = true }) ++ .{Entry{ .mods_empty_is_any = false, .sequence = "\x1b[1;5S" }});
+    result.set(.f29, pcStyleWithImplicitMods("\x1b[15;{}~", .{ .ctrl = true }) ++ .{Entry{ .mods_empty_is_any = false, .sequence = "\x1b[15;5~" }});
+    result.set(.f30, pcStyleWithImplicitMods("\x1b[17;{}~", .{ .ctrl = true }) ++ .{Entry{ .mods_empty_is_any = false, .sequence = "\x1b[17;5~" }});
+    result.set(.f31, pcStyleWithImplicitMods("\x1b[18;{}~", .{ .ctrl = true }) ++ .{Entry{ .mods_empty_is_any = false, .sequence = "\x1b[18;5~" }});
+    result.set(.f32, pcStyleWithImplicitMods("\x1b[19;{}~", .{ .ctrl = true }) ++ .{Entry{ .mods_empty_is_any = false, .sequence = "\x1b[19;5~" }});
+    result.set(.f33, pcStyleWithImplicitMods("\x1b[20;{}~", .{ .ctrl = true }) ++ .{Entry{ .mods_empty_is_any = false, .sequence = "\x1b[20;5~" }});
+    result.set(.f34, pcStyleWithImplicitMods("\x1b[21;{}~", .{ .ctrl = true }) ++ .{Entry{ .mods_empty_is_any = false, .sequence = "\x1b[21;5~" }});
+    result.set(.f35, pcStyleWithImplicitMods("\x1b[23;{}~", .{ .ctrl = true }) ++ .{Entry{ .mods_empty_is_any = false, .sequence = "\x1b[23;5~" }});
 
     // Keypad keys
     result.set(.numpad_0, kpKeys("p"));
@@ -192,7 +202,7 @@ pub const keys = keys: {
 
         // Everything else
         .{ .mods = .{ .alt = true, .shift = true }, .sequence = "\x1b[27;4;9~" },
-        .{ .mods = .{ .ctrl = true }, .sequence = "\t" },
+        .{ .mods = .{ .ctrl = true }, .sequence = "\x1b[27;5;9~" },
         .{ .mods = .{ .ctrl = true, .shift = true }, .sequence = "\x1b[27;6;9~" },
         .{ .mods = .{ .alt = true, .ctrl = true }, .sequence = "\x1b[27;7;9~" },
         .{ .mods = .{ .alt = true, .ctrl = true, .shift = true }, .sequence = "\x1b[27;8;9~" },

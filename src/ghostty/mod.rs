@@ -2633,14 +2633,14 @@ impl KeyEncoder {
     pub fn set_from_terminal(&mut self, terminal: &Terminal) {
         unsafe { ffi::ghostty_key_encoder_setopt_from_terminal(self.raw, terminal.raw()) }
 
-        // Herdr receives semantic Alt events from another terminal, so macOS
-        // must not reinterpret them as local Option text input.
-        let option_as_alt = ffi::GhosttyOptionAsAlt_GHOSTTY_OPTION_AS_ALT_TRUE;
+        // Pane input originated in another terminal and is already semantic.
+        // Keep encoding independent of the server's host OS conventions.
+        let proxy_events = true;
         unsafe {
             ffi::ghostty_key_encoder_setopt(
                 self.raw,
-                ffi::GhosttyKeyEncoderOption_GHOSTTY_KEY_ENCODER_OPT_MACOS_OPTION_AS_ALT,
-                ptr::from_ref(&option_as_alt).cast(),
+                ffi::GhosttyKeyEncoderOption_GHOSTTY_KEY_ENCODER_OPT_PROXY_EVENTS,
+                ptr::from_ref(&proxy_events).cast(),
             )
         }
     }

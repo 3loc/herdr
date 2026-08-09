@@ -151,17 +151,16 @@ cd vendor/libghostty-vt && zig build test-lib-vt -Dsimd=true
 just test-one keyboard_corpus_survives_fragmentation_and_pane_encoding
 ```
 
-## 0005 preserve legacy Ctrl-Tab compatibility
+## 0005 encode terminal proxy key events deterministically
 
 status: active
 
-patch: `vendor/patches/libghostty-vt/0005-preserve-legacy-ctrl-tab.patch`
+patch: `vendor/patches/libghostty-vt/0005-proxy-key-encoding.patch`
 
 herdr issue: https://github.com/herdrdev/herdr/issues/2514
 
-upstream discussion: not opened; this behavior preserves Herdr's existing
-terminal-proxy compatibility policy rather than changing Ghostty's terminal UI
-policy
+upstream discussion: not opened; this extension defines a terminal-proxy input
+mode rather than changing Ghostty's local terminal input policy
 
 upstream pr: not opened
 
@@ -169,95 +168,64 @@ vendored base: `c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`
 
 local files:
 
+- `vendor/libghostty-vt/include/ghostty/vt/key/encoder.h`
+- `vendor/libghostty-vt/src/input/key_encode.zig`
+- `vendor/libghostty-vt/src/terminal/c/key_encode.zig`
+
+reason: Herdr receives semantic key events from another terminal. Applying the
+server host's macOS Option and Command conventions to those events makes the
+same input encode differently on macOS and Linux. Proxy mode trusts the event's
+modifiers and generated text, and preserves complete Alt-prefixed UTF-8
+without changing Ghostty's default local input behavior. Herdr reapplies the
+caller-owned option after every terminal-state refresh.
+
+remove when: upstream libghostty-vt exposes equivalent host-independent proxy
+encoding semantics and Herdr's cross-platform keyboard corpus passes without
+this patch.
+
+verification:
+
+```sh
+cd vendor/libghostty-vt && zig build test-lib-vt -Dsimd=true
+just test-one keyboard_corpus_survives_fragmentation_and_pane_encoding
+uv run python -m unittest scripts.test_vendor_libghostty_vt
+```
+
+## 0006 support Kitty function keys through F35
+
+status: active
+
+patch: `vendor/patches/libghostty-vt/0006-extended-function-keys-f35.patch`
+
+herdr issue: https://github.com/herdrdev/herdr/issues/2514
+
+upstream discussion: not opened
+
+upstream pr: not opened
+
+vendored base: `c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`
+
+local files:
+
+- `vendor/libghostty-vt/include/ghostty/vt/key/event.h`
 - `vendor/libghostty-vt/src/input/function_keys.zig`
+- `vendor/libghostty-vt/src/input/key.zig`
 - `vendor/libghostty-vt/src/input/key_encode.zig`
+- `vendor/libghostty-vt/src/input/kitty.zig`
 
-reason: Herdr historically downgrades Ctrl-Tab to Tab for legacy destination
-panes, which cannot distinguish Ctrl-Tab without an extended keyboard protocol.
-Keeping this policy in the single Ghostty pane encoder avoids changing existing
-shell and application behavior during the encoder cutover.
+reason: the Kitty protocol defines F13-F35, but libghostty-vt stops its key
+model at F25. Herdr can receive F26-F35 from its host terminal, so dropping
+those events makes the proxy incomplete. The extension appends ABI values,
+preserves existing key constants, and maps F26-F35 to their standard Kitty and
+legacy xterm sequences.
 
-remove when: Herdr intentionally changes its legacy Ctrl-Tab compatibility
-policy, with migration coverage for applications that currently receive Tab.
+remove when: upstream libghostty-vt models and encodes F26-F35 and Herdr's
+keyboard corpus passes without this patch.
 
 verification:
 
 ```sh
 cd vendor/libghostty-vt && zig build test-lib-vt -Dsimd=true
-just test-one ghostty_ctrl_tab_matches_the_pane_keyboard_protocol
-just test-one keyboard_corpus_survives_fragmentation_and_pane_encoding
-```
-
-## 0006 honor consumed Shift in legacy control keys
-
-status: active
-
-patch: `vendor/patches/libghostty-vt/0006-honor-consumed-shift-in-legacy-control-keys.patch`
-
-herdr issue: https://github.com/herdrdev/herdr/issues/2514
-
-upstream discussion: not opened; this changes proxy-event handling where Herdr
-provides authoritative consumed-modifier metadata
-
-upstream pr: not opened
-
-vendored base: `c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`
-
-local files:
-
-- `vendor/libghostty-vt/src/input/key_encode.zig`
-
-reason: for legacy destinations, a Shift modifier consumed to produce an
-uppercase character must not turn Ctrl-Shift-C into CSI-u instead of the
-traditional Ctrl-C byte. That legacy protocol cannot reliably preserve the
-physical Shift after it produced uppercase text. modifyOtherKeys mode 2 still
-receives every modifier, and Kitty panes still preserve Ctrl-Shift as distinct
-metadata.
-
-remove when: upstream libghostty-vt uses consumed modifier metadata for legacy
-control-sequence selection while preserving modifyOtherKeys and Kitty behavior.
-
-verification:
-
-```sh
-cd vendor/libghostty-vt && zig build test-lib-vt -Dsimd=true
-just test-one retained_selection_copy_shortcut_requires_exact_modifiers
-just test-one keyboard_corpus_survives_fragmentation_and_pane_encoding
-```
-
-## 0007 preserve proxy key compatibility
-
-status: active
-
-patch: `vendor/patches/libghostty-vt/0007-preserve-proxy-key-compatibility.patch`
-
-herdr issue: https://github.com/herdrdev/herdr/issues/2514
-
-upstream discussion: not opened; these behaviors preserve Herdr's existing
-terminal-proxy compatibility while the corresponding upstream encoder gaps are
-reported separately
-
-upstream pr: not opened
-
-vendored base: `c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`
-
-local files:
-
-- `vendor/libghostty-vt/src/input/key_encode.zig`
-
-reason: proxied semantic Alt events must retain their modifier with complete
-UTF-8 text, and Windows enhanced input represents Ctrl-_ as semantic
-Ctrl-minus. Without these extensions, legacy panes receive malformed UTF-8 or
-CSI-u instead of unit separator.
-
-remove when: upstream libghostty-vt prefixes complete UTF-8 text for semantic
-Alt input and accepts Ctrl-minus as a unit-separator alias, with Herdr's
-pipeline corpus passing unchanged.
-
-verification:
-
-```sh
-cd vendor/libghostty-vt && zig build test-lib-vt -Dsimd=true
-just test-one ghostty_legacy_pane_preserves_semantic_ctrl_minus_alias
+just test-one ghostty_encodes_all_kitty_extended_function_keys
 just test-one keyboard_corpus_survives_fragmentation_and_pane_encoding
 ```

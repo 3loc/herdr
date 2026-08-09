@@ -122,7 +122,10 @@ legacy_ctrl_f3	1b5b313b3552	f:3	control	press		-	legacy	1b5b313b3552
 kitty_f13_legacy	1b5b35373337363b3175	f:13	-	press		-	legacy	1b5b313b3250
 kitty_f24_legacy	1b5b35373338373b3175	f:24	-	press		-	legacy	1b5b32343b327e
 kitty_f25_legacy	1b5b35373338383b3175	f:25	-	press		-	legacy	1b5b313b3550
+kitty_f26_legacy	1b5b35373338393b3175	f:26	-	press		-	legacy	1b5b313b3551
+kitty_f35_legacy	1b5b35373339383b3175	f:35	-	press		-	legacy	1b5b32333b357e
 kitty_f13_kitty_1	1b5b35373337363b3175	f:13	-	press		-	kitty_1	1b5b353733373675
+kitty_f35_kitty_1	1b5b35373339383b3175	f:35	-	press		-	kitty_1	1b5b353733393875
 legacy_backspace_backarrow	7f	backspace	-	press		-	backarrow	08
 kitty_keypad_1_application_keypad_characterized	1b5b35373430303b3175	char:1	-	press		-	application_keypad	31
 kitty_ctrl_a_legacy	1b5b39373b3575	char:a	control	press		-	legacy	01

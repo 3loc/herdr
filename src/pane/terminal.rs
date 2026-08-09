@@ -24,7 +24,7 @@ use super::{
         ghostty_key_event_from_terminal_key, ghostty_mouse_encoder_for_terminal,
         ghostty_mouse_event_from_button_kind, ghostty_mouse_event_from_motion_kind,
         ghostty_mouse_event_from_wheel_kind, ghostty_mouse_position_for_terminal,
-        GhosttyKeyEventAdapterError,
+        normalize_terminal_key_for_pane, GhosttyKeyEventAdapterError, PaneKeyEncodingPolicy,
     },
     kitty_keyboard::KittyKeyboardTracker,
     osc::{
@@ -172,6 +172,7 @@ enum KeyEncodingOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum KeyEncodingUnavailable {
     Adapter(GhosttyKeyEventAdapterError),
+    TerminalLockPoisoned,
     EncoderLockPoisoned,
     EncoderError,
 }
@@ -1861,6 +1862,19 @@ impl GhosttyPaneTerminal {
                 .unwrap_or(KeyEncodingOutcome::Suppressed);
         }
 
+        let Ok(core) = self.core.lock() else {
+            return KeyEncodingOutcome::Unavailable(KeyEncodingUnavailable::TerminalLockPoisoned);
+        };
+        let key = normalize_terminal_key_for_pane(
+            key,
+            PaneKeyEncodingPolicy {
+                kitty_keyboard: core
+                    .terminal
+                    .kitty_keyboard_flags()
+                    .is_ok_and(|flags| flags != 0),
+                modify_other_keys_mode: core.kitty_keyboard.modify_other_keys_mode(),
+            },
+        );
         let event = match ghostty_key_event_from_terminal_key(&key) {
             Ok(event) => event,
             Err(error) => {
@@ -2188,6 +2202,7 @@ fn log_key_encoding_unavailable(reason: KeyEncodingUnavailable) {
 
     const LOG_INTERVAL: u64 = 1024;
     static EVENT_ALLOCATION_FAILURES: AtomicU64 = AtomicU64::new(0);
+    static TERMINAL_LOCK_FAILURES: AtomicU64 = AtomicU64::new(0);
     static ENCODER_LOCK_FAILURES: AtomicU64 = AtomicU64::new(0);
     static ENCODER_ERROR_FAILURES: AtomicU64 = AtomicU64::new(0);
 
@@ -2199,6 +2214,7 @@ fn log_key_encoding_unavailable(reason: KeyEncodingUnavailable) {
         KeyEncodingUnavailable::Adapter(GhosttyKeyEventAdapterError::EventAllocation) => {
             &EVENT_ALLOCATION_FAILURES
         }
+        KeyEncodingUnavailable::TerminalLockPoisoned => &TERMINAL_LOCK_FAILURES,
         KeyEncodingUnavailable::EncoderLockPoisoned => &ENCODER_LOCK_FAILURES,
         KeyEncodingUnavailable::EncoderError => &ENCODER_ERROR_FAILURES,
     };
@@ -4505,6 +4521,22 @@ mod tests {
     }
 
     #[test]
+    fn ghostty_consumed_shift_policy_respects_extended_keyboard_modes() {
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
+        let key = crate::input::TerminalKey::new(
+            crossterm::event::KeyCode::Char('c'),
+            crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SHIFT,
+        )
+        .with_shifted_codepoint('C' as u32);
+
+        assert_eq!(pane.encode_terminal_key(key.clone()), b"\x03");
+        pane.seed_history_ansi("\x1b[>4;2m");
+        assert_eq!(pane.encode_terminal_key(key), b"\x1b[27;6;67~");
+    }
+
+    #[test]
     fn ghostty_intentional_key_suppression_does_not_fall_back() {
         let (tx, _rx) = mpsc::channel(4);
         let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
@@ -4534,23 +4566,21 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_ghostty_key_is_suppressed_without_a_second_encoder() {
+    fn ghostty_encodes_all_kitty_extended_function_keys() {
         let (tx, _rx) = mpsc::channel(4);
         let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
         let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
 
-        let key = crate::input::TerminalKey::new(
-            crossterm::event::KeyCode::F(26),
-            crossterm::event::KeyModifiers::empty(),
-        )
-        .with_generated_text(Some("fallback".to_owned()));
-        assert_eq!(
-            pane.encode_terminal_key_once_outcome(key.clone()),
-            KeyEncodingOutcome::Unavailable(KeyEncodingUnavailable::Adapter(
-                GhosttyKeyEventAdapterError::UnsupportedKey,
-            ))
-        );
-        assert_eq!(pane.encode_terminal_key(key), b"");
+        for (function, expected) in [
+            (26, b"\x1b[1;5Q".as_slice()),
+            (35, b"\x1b[23;5~".as_slice()),
+        ] {
+            let key = crate::input::TerminalKey::new(
+                crossterm::event::KeyCode::F(function),
+                crossterm::event::KeyModifiers::empty(),
+            );
+            assert_eq!(pane.encode_terminal_key(key), expected);
+        }
     }
 
     #[test]
@@ -4924,6 +4954,34 @@ mod tests {
     }
 
     #[test]
+    fn ghostty_proxy_mode_is_independent_of_host_input_conventions() {
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
+
+        let super_text = crate::input::TerminalKey::new(
+            crossterm::event::KeyCode::Char('b'),
+            crossterm::event::KeyModifiers::SUPER,
+        );
+        assert_eq!(pane.encode_terminal_key(super_text), b"b");
+
+        pane.seed_history_ansi("\x1b[>4;2m");
+        let alt_unicode = crate::input::TerminalKey::new(
+            crossterm::event::KeyCode::Char('é'),
+            crossterm::event::KeyModifiers::ALT,
+        );
+        assert_eq!(pane.encode_terminal_key(alt_unicode), b"\x1b[27;3;233~");
+
+        pane.seed_history_ansi("\x1b[>31u");
+        let kitty_alt = crate::input::TerminalKey::new(
+            crossterm::event::KeyCode::Char('w'),
+            crossterm::event::KeyModifiers::ALT,
+        )
+        .with_generated_text(Some("∑".to_owned()));
+        assert_eq!(pane.encode_terminal_key(kitty_alt), b"\x1b[119;3u");
+    }
+
+    #[test]
     fn ghostty_legacy_pane_preserves_alt_shift_printable_text() {
         let (tx, _rx) = mpsc::channel(4);
         let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
@@ -4938,16 +4996,25 @@ mod tests {
     }
 
     #[test]
-    fn ghostty_legacy_pane_preserves_semantic_ctrl_minus_alias() {
+    fn ghostty_legacy_pane_preserves_windows_ctrl_minus_alias() {
         let (tx, _rx) = mpsc::channel(4);
         let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
         let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
-        let key = crate::input::TerminalKey::new(
+        let synthetic = crate::input::TerminalKey::new(
             crossterm::event::KeyCode::Char('-'),
             crossterm::event::KeyModifiers::CONTROL,
         );
+        assert_eq!(pane.encode_terminal_key(synthetic.clone()), b"\x1b[45;5u");
 
-        assert_eq!(pane.encode_terminal_key(key), b"\x1f");
+        let windows = synthetic.with_windows_record(crate::input::WindowsKeyRecord {
+            key_down: true,
+            repeat_count: 1,
+            virtual_key_code: 0xbd,
+            virtual_scan_code: 0x0c,
+            unicode: 0x1f,
+            control_key_state: 0x0008,
+        });
+        assert_eq!(pane.encode_terminal_key(windows), b"\x1f");
     }
 
     #[test]

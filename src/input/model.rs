@@ -175,6 +175,15 @@ impl TerminalKey {
         }
     }
 
+    pub(crate) fn is_windows_ctrl_minus_alias(&self) -> bool {
+        const CTRL_PRESSED: u32 = 0x0004 | 0x0008;
+        matches!(
+            self.source,
+            KeySource::WindowsConsole { record, .. }
+                if record.unicode == 0x1f && record.control_key_state & CTRL_PRESSED != 0
+        )
+    }
+
     pub(crate) fn identity(&self) -> KeyIdentity {
         match self.source {
             KeySource::WindowsConsole {

@@ -301,6 +301,18 @@ typedef enum GHOSTTY_ENUM_TYPED {
     GHOSTTY_KEY_COPY,
     GHOSTTY_KEY_CUT,
     GHOSTTY_KEY_PASTE,
+
+    // Kitty protocol extended function keys, appended for ABI stability.
+    GHOSTTY_KEY_F26,
+    GHOSTTY_KEY_F27,
+    GHOSTTY_KEY_F28,
+    GHOSTTY_KEY_F29,
+    GHOSTTY_KEY_F30,
+    GHOSTTY_KEY_F31,
+    GHOSTTY_KEY_F32,
+    GHOSTTY_KEY_F33,
+    GHOSTTY_KEY_F34,
+    GHOSTTY_KEY_F35,
     GHOSTTY_KEY_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
 } GhosttyKey;
 
