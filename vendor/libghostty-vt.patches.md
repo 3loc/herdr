@@ -133,11 +133,13 @@ local files:
 
 reason: libghostty-vt models F13-F25 but its legacy encoder has no entries for
 them, silently suppressing keys that Herdr receives through Kitty input. The
-extension uses the standard xterm/terminfo sequences and composes additional
-modifiers with each key's implicit Shift or Control modifier.
+extension uses the standard xterm/terminfo sequences, corrects modified F3 to
+that same standard, and composes additional modifiers with each extended key's
+implicit Shift or Control modifier.
 
 remove when: upstream libghostty-vt encodes F13-F25 in legacy mode with the
-standard xterm sequences and modifier composition.
+standard xterm sequences and modifier composition, and emits the standard
+modified F3 sequence.
 
 verification:
 
@@ -215,5 +217,42 @@ verification:
 ```sh
 cd vendor/libghostty-vt && zig build test-lib-vt -Dsimd=true
 just test-one retained_selection_copy_shortcut_requires_exact_modifiers
+just test-one keyboard_corpus_survives_fragmentation_and_pane_encoding
+```
+
+## 0007 preserve proxy key compatibility
+
+status: active
+
+patch: `vendor/patches/libghostty-vt/0007-preserve-proxy-key-compatibility.patch`
+
+herdr issue: https://github.com/herdrdev/herdr/issues/2514
+
+upstream discussion: not opened; these behaviors preserve Herdr's existing
+terminal-proxy compatibility while the corresponding upstream encoder gaps are
+reported separately
+
+upstream pr: not opened
+
+vendored base: `c5a21edfcbc2d5b46540ad91b7980aca31f5f1f3`
+
+local files:
+
+- `vendor/libghostty-vt/src/input/key_encode.zig`
+
+reason: proxied semantic Alt events must retain their modifier with complete
+UTF-8 text, and Windows enhanced input represents Ctrl-_ as semantic
+Ctrl-minus. Without these extensions, legacy panes receive malformed UTF-8 or
+CSI-u instead of unit separator.
+
+remove when: upstream libghostty-vt prefixes complete UTF-8 text for semantic
+Alt input and accepts Ctrl-minus as a unit-separator alias, with Herdr's
+pipeline corpus passing unchanged.
+
+verification:
+
+```sh
+cd vendor/libghostty-vt && zig build test-lib-vt -Dsimd=true
+just test-one ghostty_legacy_pane_preserves_semantic_ctrl_minus_alias
 just test-one keyboard_corpus_survives_fragmentation_and_pane_encoding
 ```

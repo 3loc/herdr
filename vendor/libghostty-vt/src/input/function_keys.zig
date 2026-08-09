@@ -92,7 +92,7 @@ pub const keys = keys: {
     // Function Keys.
     result.set(.f1, pcStyle("\x1b[1;{}P") ++ .{Entry{ .sequence = "\x1BOP" }});
     result.set(.f2, pcStyle("\x1b[1;{}Q") ++ .{Entry{ .sequence = "\x1BOQ" }});
-    result.set(.f3, pcStyle("\x1b[13;{}~") ++ .{Entry{ .sequence = "\x1BOR" }});
+    result.set(.f3, pcStyle("\x1b[1;{}R") ++ .{Entry{ .sequence = "\x1BOR" }});
     result.set(.f4, pcStyle("\x1b[1;{}S") ++ .{Entry{ .sequence = "\x1BOS" }});
     result.set(.f5, pcStyle("\x1b[15;{}~") ++ .{Entry{ .sequence = "\x1B[15~" }});
     result.set(.f6, pcStyle("\x1b[17;{}~") ++ .{Entry{ .sequence = "\x1B[17~" }});

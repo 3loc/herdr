@@ -4992,6 +4992,39 @@ mod tests {
     }
 
     #[test]
+    fn ghostty_legacy_pane_preserves_alt_shift_printable_text() {
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
+        let key = crate::input::TerminalKey::new(
+            crossterm::event::KeyCode::Char('.'),
+            crossterm::event::KeyModifiers::ALT | crossterm::event::KeyModifiers::SHIFT,
+        )
+        .with_shifted_codepoint('>' as u32);
+
+        assert_eq!(
+            pane.encode_terminal_key(key, crate::input::KeyboardProtocol::Legacy),
+            b"\x1b>"
+        );
+    }
+
+    #[test]
+    fn ghostty_legacy_pane_preserves_semantic_ctrl_minus_alias() {
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
+        let key = crate::input::TerminalKey::new(
+            crossterm::event::KeyCode::Char('-'),
+            crossterm::event::KeyModifiers::CONTROL,
+        );
+
+        assert_eq!(
+            pane.encode_terminal_key(key, crate::input::KeyboardProtocol::Legacy),
+            b"\x1f"
+        );
+    }
+
+    #[test]
     fn ghostty_kitty_pane_preserves_legacy_ctrl_alt_letter() {
         let (tx, _rx) = mpsc::channel(4);
         let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();

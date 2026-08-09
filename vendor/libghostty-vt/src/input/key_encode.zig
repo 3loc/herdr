@@ -417,12 +417,11 @@ fn legacy(
     // alt-prefix handling of unshifted codepoints... so we process that.
     const utf8 = event.utf8;
     if (utf8.len == 0) {
-        if (try legacyAltPrefix(
-            event,
-            binding_mods,
-            all_mods,
-            opts,
-        )) |byte| try writer.print("\x1B{c}", .{byte});
+        if (legacyAltPrefixEnabled(binding_mods, all_mods, opts)) {
+            if (std.math.cast(u8, event.unshifted_codepoint)) |byte| {
+                try writer.print("\x1B{c}", .{byte});
+            }
+        }
         return;
     }
 
@@ -538,13 +537,26 @@ fn legacy(
 
     // If we have alt-pressed and alt-esc-prefix is enabled, then
     // we need to prefix the utf8 sequence with an esc.
-    if (try legacyAltPrefix(
-        event,
-        binding_mods,
-        all_mods,
-        opts,
-    )) |byte| {
-        return try writer.print("\x1B{c}", .{byte});
+    if (legacyAltPrefixEnabled(binding_mods, all_mods, opts)) {
+        try writer.writeByte(0x1B);
+
+        // macOS may translate Option plus a physical key into unrelated text.
+        // Preserve the physical key for that local-input case, but otherwise
+        // prefix the complete UTF-8 text rather than truncating it to one byte.
+        if (comptime builtin.os.tag == .macos) {
+            if (!all_mods.shift and event.unshifted_codepoint > 0) unshifted: {
+                const view = std.unicode.Utf8View.init(utf8) catch break :unshifted;
+                var it = view.iterator();
+                const codepoint = it.nextCodepoint() orelse break :unshifted;
+                if (it.nextCodepoint() == null and codepoint != event.unshifted_codepoint) {
+                    var buf: [4]u8 = undefined;
+                    const len = try std.unicode.utf8Encode(event.unshifted_codepoint, &buf);
+                    return try writer.writeAll(buf[0..len]);
+                }
+            }
+        }
+
+        return try writer.writeAll(utf8);
     }
 
     // If we are on macOS, command+keys do not encode text. It isn't
@@ -563,48 +575,27 @@ fn legacy(
     return try writer.writeAll(utf8);
 }
 
-fn legacyAltPrefix(
-    event: key.KeyEvent,
+fn legacyAltPrefixEnabled(
     binding_mods: key.Mods,
     mods: key.Mods,
     opts: Options,
-) !?u8 {
+) bool {
     // This only takes effect with alt pressed
-    if (!binding_mods.alt or !opts.alt_esc_prefix) return null;
+    if (!binding_mods.alt or !opts.alt_esc_prefix) return false;
 
     // On macOS, we only handle option like alt in certain
     // circumstances. Otherwise, macOS does a unicode translation
     // and we allow that to happen.
     if (comptime builtin.os.tag == .macos) {
         switch (opts.macos_option_as_alt) {
-            .false => return null,
-            .left => if (mods.sides.alt == .right) return null,
-            .right => if (mods.sides.alt == .left) return null,
+            .false => return false,
+            .left => if (mods.sides.alt == .right) return false,
+            .right => if (mods.sides.alt == .left) return false,
             .true => {},
         }
     }
 
-    // Otherwise, we require utf8 to already have the byte represented.
-    const utf8 = event.utf8;
-    if (utf8.len == 1) {
-        if (std.math.cast(u8, utf8[0])) |byte| {
-            return byte;
-        }
-    }
-
-    // If UTF8 isn't set, we will allow unshifted codepoints through.
-    if (event.unshifted_codepoint > 0) {
-        if (std.math.cast(
-            u8,
-            event.unshifted_codepoint,
-        )) |byte| {
-            return byte;
-        }
-    }
-
-    // Else, we can't figure out the byte to alt-prefix so we
-    // exit this handling.
-    return null;
+    return true;
 }
 
 /// A helper to memcpy a src value to a buffer and return the result.
@@ -790,6 +781,7 @@ fn ctrlSeq(
     return switch (char) {
         ' ' => 0,
         '/' => 31,
+        '-' => 31,
         '0' => 48,
         '1' => 49,
         '2' => 0,
@@ -2004,6 +1996,17 @@ test "legacy: esc with utf8 (dead key state)" {
     try testing.expectEqualStrings("A", writer.buffered());
 }
 
+test "legacy: ctrl+minus semantic alias" {
+    var buf: [128]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
+    try legacy(&writer, .{
+        .key = .minus,
+        .mods = .{ .ctrl = true },
+        .utf8 = "-",
+    }, .{});
+    try testing.expectEqualStrings("\x1F", writer.buffered());
+}
+
 test "legacy: ctrl+shift+minus (underscore on US)" {
     var buf: [128]u8 = undefined;
     var writer: std.Io.Writer = .fixed(&buf);
@@ -2024,6 +2027,37 @@ test "legacy: ctrl+alt+c" {
         .utf8 = "c",
     }, .{});
     try testing.expectEqualStrings("\x1b\x03", writer.buffered());
+}
+
+test "legacy: alt+unicode prefixes the complete utf8 text" {
+    var buf: [128]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
+    try legacy(&writer, .{
+        .key = .unidentified,
+        .mods = .{ .alt = true },
+        .utf8 = "é",
+        .unshifted_codepoint = 'é',
+    }, .{
+        .alt_esc_prefix = true,
+        .macos_option_as_alt = .true,
+    });
+    try testing.expectEqualStrings("\x1bé", writer.buffered());
+}
+
+test "legacy: alt+shift preserves shifted text" {
+    var buf: [128]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
+    try legacy(&writer, .{
+        .key = .period,
+        .mods = .{ .alt = true, .shift = true },
+        .consumed_mods = .{ .shift = true },
+        .utf8 = ">",
+        .unshifted_codepoint = '.',
+    }, .{
+        .alt_esc_prefix = true,
+        .macos_option_as_alt = .true,
+    });
+    try testing.expectEqualStrings("\x1b>", writer.buffered());
 }
 
 test "legacy: alt+c" {
@@ -2097,8 +2131,9 @@ test "legacy: alt+ф" {
         .mods = .{ .alt = true },
     }, .{
         .alt_esc_prefix = true,
+        .macos_option_as_alt = .true,
     });
-    try testing.expectEqualStrings("ф", writer.buffered());
+    try testing.expectEqualStrings("\x1bф", writer.buffered());
 }
 
 test "legacy: ctrl+c" {
@@ -2415,7 +2450,7 @@ test "legacy: f1" {
             .mods = .{ .ctrl = true },
             .consumed_mods = .{},
         }, .{});
-        try testing.expectEqualStrings("\x1b[13;5~", writer.buffered());
+        try testing.expectEqualStrings("\x1b[1;5R", writer.buffered());
     }
 
     // F4

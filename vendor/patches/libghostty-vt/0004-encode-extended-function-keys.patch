@@ -13,7 +13,7 @@ diff --git a/vendor/libghostty-vt/src/input/function_keys.zig b/vendor/libghostt
 index 66ab4bc4..b1a0f0a5 100644
 --- a/vendor/libghostty-vt/src/input/function_keys.zig
 +++ b/vendor/libghostty-vt/src/input/function_keys.zig
-@@ -89,7 +89,7 @@ pub const keys = keys: {
+@@ -89,10 +89,10 @@ pub const keys = keys: {
      result.set(.page_up, pcStyle("\x1b[5;{}~") ++ .{Entry{ .sequence = "\x1B[5~" }});
      result.set(.page_down, pcStyle("\x1b[6;{}~") ++ .{Entry{ .sequence = "\x1B[6~" }});
  
@@ -21,7 +21,11 @@ index 66ab4bc4..b1a0f0a5 100644
 +    // Function Keys.
      result.set(.f1, pcStyle("\x1b[1;{}P") ++ .{Entry{ .sequence = "\x1BOP" }});
      result.set(.f2, pcStyle("\x1b[1;{}Q") ++ .{Entry{ .sequence = "\x1BOQ" }});
-     result.set(.f3, pcStyle("\x1b[13;{}~") ++ .{Entry{ .sequence = "\x1BOR" }});
+-    result.set(.f3, pcStyle("\x1b[13;{}~") ++ .{Entry{ .sequence = "\x1BOR" }});
++    result.set(.f3, pcStyle("\x1b[1;{}R") ++ .{Entry{ .sequence = "\x1BOR" }});
+     result.set(.f4, pcStyle("\x1b[1;{}S") ++ .{Entry{ .sequence = "\x1BOS" }});
+     result.set(.f5, pcStyle("\x1b[15;{}~") ++ .{Entry{ .sequence = "\x1B[15~" }});
+     result.set(.f6, pcStyle("\x1b[17;{}~") ++ .{Entry{ .sequence = "\x1B[17~" }});
 @@ -102,6 +102,19 @@ pub const keys = keys: {
      result.set(.f10, pcStyle("\x1b[21;{}~") ++ .{Entry{ .sequence = "\x1B[21~" }});
      result.set(.f11, pcStyle("\x1b[23;{}~") ++ .{Entry{ .sequence = "\x1B[23~" }});
@@ -71,6 +75,18 @@ diff --git a/vendor/libghostty-vt/src/input/key_encode.zig b/vendor/libghostty-v
 index d04e4f37..a3074601 100644
 --- a/vendor/libghostty-vt/src/input/key_encode.zig
 +++ b/vendor/libghostty-vt/src/input/key_encode.zig
+@@ -2409,10 +2409,10 @@ test "legacy: f1" {
+     // F3
+     {
+         var writer: std.Io.Writer = .fixed(&buf);
+         try legacy(&writer, .{
+             .key = .f3,
+             .mods = .{ .ctrl = true },
+             .consumed_mods = .{},
+         }, .{});
+-        try testing.expectEqualStrings("\x1b[13;5~", writer.buffered());
++        try testing.expectEqualStrings("\x1b[1;5R", writer.buffered());
+     }
 @@ -2427,6 +2427,28 @@ test "legacy: f1" {
      }
  }

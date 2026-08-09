@@ -111,11 +111,14 @@ kitty_shift_letter_kitty_31	1b5b3130383a37363b323a3175	char:l	shift	press	76	-	k
 kitty_ctrl_shift_letter_kitty_5	1b5b3130383a37363b363a3175	char:l	control+shift	press	76	-	kitty_5	1b5b3130383a37363b3675
 kitty_shift_letter_kitty_25	1b5b3130383a37363b323a3175	char:l	shift	press	76	-	kitty_25	1b5b3130383b323b373675
 legacy_plain_a	61	char:a	-	press		61	legacy	61
+legacy_alt_b	1b62	char:b	alt	press		-	legacy	1b62
+legacy_alt_e_acute	1bc3a9	char:é	alt	press		-	legacy	1bc3a9
 legacy_shift_a	41	char:A	shift	press		41	legacy	41
 legacy_shift_a_kitty_13	41	char:A	shift	press		41	kitty_13	41
 legacy_bang_kitty_13	21	char:!	-	press		21	kitty_13	21
 legacy_unicode_e_acute	c3a9	char:é	-	press		c3a9	legacy	c3a9
 legacy_f1	1b4f50	f:1	-	press		-	legacy	1b4f50
+legacy_ctrl_f3	1b5b313b3552	f:3	control	press		-	legacy	1b5b313b3552
 kitty_f13_legacy	1b5b35373337363b3175	f:13	-	press		-	legacy	1b5b313b3250
 kitty_f24_legacy	1b5b35373338373b3175	f:24	-	press		-	legacy	1b5b32343b327e
 kitty_f25_legacy	1b5b35373338383b3175	f:25	-	press		-	legacy	1b5b313b3550
