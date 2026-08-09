@@ -7,8 +7,9 @@ pub(super) enum GhosttyKeyEventAdapterError {
 pub(super) fn ghostty_key_event_from_terminal_key(
     key: &crate::input::TerminalKey,
 ) -> Result<crate::ghostty::KeyEvent, GhosttyKeyEventAdapterError> {
-    let ghostty_key = ghostty_key_from_crossterm_key_code(key.code, key.shifted_codepoint)
-        .ok_or(GhosttyKeyEventAdapterError::UnsupportedKey)?;
+    let ghostty_key =
+        ghostty_key_from_crossterm_key_code(key.code, key.shifted_codepoint, key.modifiers)
+            .ok_or(GhosttyKeyEventAdapterError::UnsupportedKey)?;
     let mut event = crate::ghostty::KeyEvent::new()
         .map_err(|_| GhosttyKeyEventAdapterError::EventAllocation)?;
     event.set_action(match key.kind {
@@ -28,6 +29,7 @@ pub(super) fn ghostty_key_event_from_terminal_key(
         mods |= crate::ghostty::MOD_SHIFT;
     }
     event.set_mods(mods);
+    event.set_consumed_mods(ghostty_consumed_mods(key));
     event.set_key(ghostty_key);
 
     if let Some(text) = ghostty_key_text(key) {
@@ -74,6 +76,28 @@ pub(super) fn ghostty_mods_from_key_modifiers(modifiers: crossterm::event::KeyMo
         ghostty_mods |= crate::ghostty::MOD_META;
     }
     ghostty_mods
+}
+
+fn ghostty_consumed_mods(key: &crate::input::TerminalKey) -> u16 {
+    let only_shift = key.modifiers == crossterm::event::KeyModifiers::SHIFT;
+    let has_generated_text = key
+        .generated_text
+        .as_ref()
+        .is_some_and(|text| !text.is_empty());
+    let shift_generated_text = key
+        .modifiers
+        .contains(crossterm::event::KeyModifiers::SHIFT)
+        && matches!(key.code, crossterm::event::KeyCode::Char(c) if
+            has_generated_text
+                || key.shifted_codepoint.and_then(char::from_u32).is_some()
+                || (only_shift
+                    && (c.is_ascii_alphabetic()
+                        || ghostty_unshifted_ascii_pair(c).is_some())));
+    if shift_generated_text {
+        crate::ghostty::MOD_SHIFT
+    } else {
+        0
+    }
 }
 
 pub(super) fn ghostty_mouse_encoder_for_terminal(
@@ -219,6 +243,11 @@ fn ghostty_key_text(key: &crate::input::TerminalKey) -> Option<String> {
         crossterm::event::KeyCode::Char(c) => Some(
             key.shifted_codepoint
                 .and_then(char::from_u32)
+                .or_else(|| {
+                    (key.modifiers == crossterm::event::KeyModifiers::SHIFT)
+                        .then(|| c.is_ascii_lowercase().then(|| c.to_ascii_uppercase()))
+                        .flatten()
+                })
                 .unwrap_or(c)
                 .to_string(),
         ),
@@ -228,6 +257,14 @@ fn ghostty_key_text(key: &crate::input::TerminalKey) -> Option<String> {
 
 fn ghostty_unshifted_codepoint(key: &crate::input::TerminalKey) -> Option<u32> {
     match key.code {
+        crossterm::event::KeyCode::Char(c)
+            if key.shifted_codepoint.is_none()
+                && key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::SHIFT) =>
+        {
+            Some(ghostty_unshifted_ascii_pair(c).unwrap_or_else(|| c.to_ascii_lowercase()) as u32)
+        }
         crossterm::event::KeyCode::Char(c) => Some(c as u32),
         _ => None,
     }
@@ -236,6 +273,7 @@ fn ghostty_unshifted_codepoint(key: &crate::input::TerminalKey) -> Option<u32> {
 fn ghostty_key_from_crossterm_key_code(
     code: crossterm::event::KeyCode,
     shifted_codepoint: Option<u32>,
+    modifiers: crossterm::event::KeyModifiers,
 ) -> Option<u32> {
     use crate::ghostty::ffi;
     use crossterm::event::KeyCode;
@@ -268,18 +306,40 @@ fn ghostty_key_from_crossterm_key_code(
             10 => ffi::GhosttyKey_GHOSTTY_KEY_F10,
             11 => ffi::GhosttyKey_GHOSTTY_KEY_F11,
             12 => ffi::GhosttyKey_GHOSTTY_KEY_F12,
+            13 => ffi::GhosttyKey_GHOSTTY_KEY_F13,
+            14 => ffi::GhosttyKey_GHOSTTY_KEY_F14,
+            15 => ffi::GhosttyKey_GHOSTTY_KEY_F15,
+            16 => ffi::GhosttyKey_GHOSTTY_KEY_F16,
+            17 => ffi::GhosttyKey_GHOSTTY_KEY_F17,
+            18 => ffi::GhosttyKey_GHOSTTY_KEY_F18,
+            19 => ffi::GhosttyKey_GHOSTTY_KEY_F19,
+            20 => ffi::GhosttyKey_GHOSTTY_KEY_F20,
+            21 => ffi::GhosttyKey_GHOSTTY_KEY_F21,
+            22 => ffi::GhosttyKey_GHOSTTY_KEY_F22,
+            23 => ffi::GhosttyKey_GHOSTTY_KEY_F23,
+            24 => ffi::GhosttyKey_GHOSTTY_KEY_F24,
+            25 => ffi::GhosttyKey_GHOSTTY_KEY_F25,
             _ => return None,
         }),
-        KeyCode::Char(c) => ghostty_key_from_char(c, shifted_codepoint),
+        KeyCode::Char(c) => ghostty_key_from_char(c, shifted_codepoint, modifiers),
         _ => None,
     }
 }
 
-fn ghostty_key_from_char(c: char, shifted_codepoint: Option<u32>) -> Option<u32> {
+fn ghostty_key_from_char(
+    c: char,
+    shifted_codepoint: Option<u32>,
+    modifiers: crossterm::event::KeyModifiers,
+) -> Option<u32> {
     use crate::ghostty::ffi;
 
-    let reported = shifted_codepoint.and_then(char::from_u32).unwrap_or(c);
-    let base = ghostty_unshifted_ascii_pair(reported).unwrap_or(c);
+    let base = if shifted_codepoint.is_none()
+        && modifiers.contains(crossterm::event::KeyModifiers::SHIFT)
+    {
+        ghostty_unshifted_ascii_pair(c).unwrap_or(c)
+    } else {
+        c
+    };
 
     match base.to_ascii_lowercase() {
         'a' => Some(ffi::GhosttyKey_GHOSTTY_KEY_A),

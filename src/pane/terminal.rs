@@ -3567,6 +3567,7 @@ mod tests {
                     "pane_mode_owned_by_ghostty"
                         | "adapter_unmapped_key"
                         | "kitty_text_policy"
+                        | "duplicate_encoder_gap"
                         | "equivalent_press_suffix"
                         | "missing_modifier"
                         | "adapter_generated_text_loss"
@@ -4558,6 +4559,41 @@ mod tests {
         );
 
         assert_eq!(encoded, b"a");
+    }
+
+    #[test]
+    fn ghostty_adapter_normalizes_shifted_ascii_identity() {
+        let (tx, _rx) = mpsc::channel(4);
+        let mut terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        terminal.write(b"\x1b[>13u");
+        let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
+
+        for (character, expected) in [
+            ('A', b"\x1b[97:65;2u".as_slice()),
+            ('!', b"\x1b[49:33;2u".as_slice()),
+        ] {
+            let key = crate::input::TerminalKey::new(
+                crossterm::event::KeyCode::Char(character),
+                crossterm::event::KeyModifiers::SHIFT,
+            );
+            let event = ghostty_key_event_from_terminal_key(&key).unwrap();
+            let encoded = pane.key_encoder.lock().unwrap().encode(&event).unwrap();
+            assert_eq!(encoded, expected, "shifted {character}");
+        }
+
+        let mut events = crate::raw_input::parse_raw_input_bytes_sync(b"!");
+        let crate::raw_input::RawInputEvent::Key(unmodified_bang) = events.remove(0) else {
+            panic!("expected key event");
+        };
+        let event = ghostty_key_event_from_terminal_key(&unmodified_bang).unwrap();
+        let encoded = pane.key_encoder.lock().unwrap().encode(&event).unwrap();
+        assert_eq!(encoded, b"\x1b[33u");
+
+        let non_us_shifted_pair =
+            crate::input::parse_terminal_key_sequence("\x1b[43:42;2u").unwrap();
+        let event = ghostty_key_event_from_terminal_key(&non_us_shifted_pair).unwrap();
+        let encoded = pane.key_encoder.lock().unwrap().encode(&event).unwrap();
+        assert_eq!(encoded, b"\x1b[43:42;2u");
     }
 
     #[test]

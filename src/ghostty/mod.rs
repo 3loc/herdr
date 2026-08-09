@@ -2584,6 +2584,10 @@ impl KeyEvent {
         unsafe { ffi::ghostty_key_event_set_mods(self.raw, mods) }
     }
 
+    pub fn set_consumed_mods(&mut self, mods: u16) {
+        unsafe { ffi::ghostty_key_event_set_consumed_mods(self.raw, mods) }
+    }
+
     pub fn set_utf8(&mut self, text: &str) {
         self.utf8.clear();
         self.utf8.push_str(text);

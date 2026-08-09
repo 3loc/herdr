@@ -198,7 +198,8 @@ fn kitty(
             // We don't send release events because those are specially encoded.
             if (event.utf8.len > 0 and
                 binding_mods.empty() and
-                event.action != .release)
+                (event.action == .press or
+                    (event.action == .repeat and !opts.kitty_flags.report_events)))
             plain_text: {
                 // We only do this for printable characters. We should
                 // inspect the real unicode codepoint properties here but
@@ -1262,6 +1263,21 @@ test "kitty: repeat with just disambiguate" {
         .kitty_flags = .{ .disambiguate = true },
     });
     try testing.expectEqualStrings("a", writer.buffered());
+}
+
+test "kitty: repeat with event reporting" {
+    var buf: [128]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
+    try kitty(&writer, .{
+        .key = .key_a,
+        .action = .repeat,
+        .mods = .{},
+        .utf8 = "a",
+        .unshifted_codepoint = 'a',
+    }, .{
+        .kitty_flags = .{ .disambiguate = true, .report_events = true },
+    });
+    try testing.expectEqualStrings("\x1b[97;1:2u", writer.buffered());
 }
 //
 test "kitty: enter, backspace, tab" {
@@ -2409,6 +2425,28 @@ test "legacy: f1" {
         }, .{});
         try testing.expectEqualStrings("\x1b[15;5~", writer.buffered());
     }
+}
+
+test "legacy: extended function keys" {
+    var buf: [128]u8 = undefined;
+
+    const cases = .{
+        .{ key.Key.f13, "\x1b[1;2P" },
+        .{ key.Key.f24, "\x1b[24;2~" },
+        .{ key.Key.f25, "\x1b[1;5P" },
+    };
+    inline for (cases) |case| {
+        var writer: std.Io.Writer = .fixed(&buf);
+        try legacy(&writer, .{ .key = case[0] }, .{});
+        try testing.expectEqualStrings(case[1], writer.buffered());
+    }
+
+    var writer: std.Io.Writer = .fixed(&buf);
+    try legacy(&writer, .{
+        .key = .f13,
+        .mods = .{ .ctrl = true },
+    }, .{});
+    try testing.expectEqualStrings("\x1b[1;6P", writer.buffered());
 }
 
 test "legacy: left_shift+tab" {
