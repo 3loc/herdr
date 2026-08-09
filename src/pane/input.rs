@@ -1,7 +1,16 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum GhosttyKeyEventAdapterError {
+    UnsupportedKey,
+    EventAllocation,
+}
+
 pub(super) fn ghostty_key_event_from_terminal_key(
     key: &crate::input::TerminalKey,
-) -> Option<crate::ghostty::KeyEvent> {
-    let mut event = crate::ghostty::KeyEvent::new().ok()?;
+) -> Result<crate::ghostty::KeyEvent, GhosttyKeyEventAdapterError> {
+    let ghostty_key = ghostty_key_from_crossterm_key_code(key.code, key.shifted_codepoint)
+        .ok_or(GhosttyKeyEventAdapterError::UnsupportedKey)?;
+    let mut event = crate::ghostty::KeyEvent::new()
+        .map_err(|_| GhosttyKeyEventAdapterError::EventAllocation)?;
     event.set_action(match key.kind {
         crossterm::event::KeyEventKind::Press => {
             crate::ghostty::ffi::GhosttyKeyAction_GHOSTTY_KEY_ACTION_PRESS
@@ -19,10 +28,7 @@ pub(super) fn ghostty_key_event_from_terminal_key(
         mods |= crate::ghostty::MOD_SHIFT;
     }
     event.set_mods(mods);
-    event.set_key(ghostty_key_from_crossterm_key_code(
-        key.code,
-        key.shifted_codepoint,
-    )?);
+    event.set_key(ghostty_key);
 
     if let Some(text) = ghostty_key_text(key) {
         event.set_utf8(&text);
@@ -40,7 +46,7 @@ pub(super) fn ghostty_key_event_from_terminal_key(
         event.set_base_layout_codepoint(codepoint);
     }
 
-    Some(event)
+    Ok(event)
 }
 
 pub(super) fn ghostty_prefers_herdr_text_encoding(key: &crate::input::TerminalKey) -> bool {

@@ -24,7 +24,7 @@ use super::{
         ghostty_key_event_from_terminal_key, ghostty_mouse_encoder_for_terminal,
         ghostty_mouse_event_from_button_kind, ghostty_mouse_event_from_motion_kind,
         ghostty_mouse_event_from_wheel_kind, ghostty_mouse_position_for_terminal,
-        ghostty_prefers_herdr_text_encoding,
+        ghostty_prefers_herdr_text_encoding, GhosttyKeyEventAdapterError,
     },
     kitty_keyboard::KittyKeyboardTracker,
     osc::{
@@ -160,6 +160,21 @@ pub(crate) struct ProcessBytesResult {
 pub(crate) struct TerminalReadSnapshot {
     pub text: String,
     pub truncated: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum KeyEncodingOutcome {
+    Encoded(Vec<u8>),
+    Suppressed,
+    Unavailable(KeyEncodingUnavailable),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyEncodingUnavailable {
+    Adapter(GhosttyKeyEventAdapterError),
+    EncoderLockPoisoned,
+    EncoderError,
+    EventKindMismatch,
 }
 
 pub(crate) struct GhosttyPaneTerminal {
@@ -1838,32 +1853,50 @@ impl GhosttyPaneTerminal {
         key: crate::input::TerminalKey,
         protocol: crate::input::KeyboardProtocol,
     ) -> Vec<u8> {
+        let fallback_key = key.clone();
+        match self.encode_terminal_key_once_outcome(key, protocol) {
+            KeyEncodingOutcome::Encoded(bytes) => bytes,
+            KeyEncodingOutcome::Suppressed => Vec::new(),
+            KeyEncodingOutcome::Unavailable(reason) => {
+                log_key_encoding_unavailable(reason);
+                crate::input::encode_terminal_key(fallback_key, protocol)
+            }
+        }
+    }
+
+    fn encode_terminal_key_once_outcome(
+        &self,
+        key: crate::input::TerminalKey,
+        protocol: crate::input::KeyboardProtocol,
+    ) -> KeyEncodingOutcome {
         if matches!(protocol, crate::input::KeyboardProtocol::Legacy)
             && key.code == crossterm::event::KeyCode::Tab
             && key.modifiers == crossterm::event::KeyModifiers::CONTROL
         {
-            return crate::input::encode_terminal_key(key, protocol);
+            return KeyEncodingOutcome::Encoded(crate::input::encode_terminal_key(key, protocol));
         }
 
         if ghostty_prefers_herdr_text_encoding(&key) {
-            return crate::input::encode_terminal_key(key, protocol);
+            return KeyEncodingOutcome::Encoded(crate::input::encode_terminal_key(key, protocol));
         }
 
-        let Some(event) = ghostty_key_event_from_terminal_key(&key) else {
-            return crate::input::encode_terminal_key(key, protocol);
+        let event = match ghostty_key_event_from_terminal_key(&key) {
+            Ok(event) => event,
+            Err(error) => {
+                return KeyEncodingOutcome::Unavailable(KeyEncodingUnavailable::Adapter(error));
+            }
         };
 
         let Ok(mut encoder) = self.key_encoder.lock() else {
-            return crate::input::encode_terminal_key(key, protocol);
+            return KeyEncodingOutcome::Unavailable(KeyEncodingUnavailable::EncoderLockPoisoned);
         };
         match encoder.encode(&event) {
-            Ok(bytes)
-                if !bytes.is_empty()
-                    && encoded_key_preserves_event_kind(&bytes, &key, protocol) =>
-            {
-                bytes
+            Ok(bytes) if bytes.is_empty() => KeyEncodingOutcome::Suppressed,
+            Ok(bytes) if encoded_key_preserves_event_kind(&bytes, &key, protocol) => {
+                KeyEncodingOutcome::Encoded(bytes)
             }
-            Ok(_) | Err(_) => crate::input::encode_terminal_key(key, protocol),
+            Ok(_) => KeyEncodingOutcome::Unavailable(KeyEncodingUnavailable::EventKindMismatch),
+            Err(_) => KeyEncodingOutcome::Unavailable(KeyEncodingUnavailable::EncoderError),
         }
     }
 
@@ -2169,6 +2202,36 @@ impl GhosttyPaneTerminal {
             .ok()
             .map(|mut core| ghostty_collect_dirty_patch(&mut core, area_width, area_height))
             .unwrap_or(TerminalDirtyPatchOutcome::Fallback)
+    }
+}
+
+fn log_key_encoding_unavailable(reason: KeyEncodingUnavailable) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static EVENT_ALLOCATION_LOGGED: AtomicBool = AtomicBool::new(false);
+    static ENCODER_LOCK_LOGGED: AtomicBool = AtomicBool::new(false);
+    static ENCODER_ERROR_LOGGED: AtomicBool = AtomicBool::new(false);
+
+    let first_failure = match reason {
+        KeyEncodingUnavailable::Adapter(GhosttyKeyEventAdapterError::UnsupportedKey)
+        | KeyEncodingUnavailable::EventKindMismatch => {
+            debug!(
+                ?reason,
+                "Ghostty key encoding unavailable; using compatibility encoder"
+            );
+            return;
+        }
+        KeyEncodingUnavailable::Adapter(GhosttyKeyEventAdapterError::EventAllocation) => {
+            &EVENT_ALLOCATION_LOGGED
+        }
+        KeyEncodingUnavailable::EncoderLockPoisoned => &ENCODER_LOCK_LOGGED,
+        KeyEncodingUnavailable::EncoderError => &ENCODER_ERROR_LOGGED,
+    };
+    if !first_failure.swap(true, Ordering::Relaxed) {
+        error!(
+            ?reason,
+            "Ghostty key encoding failed; using compatibility encoder"
+        );
     }
 }
 
@@ -3471,14 +3534,15 @@ mod tests {
             }
 
             let ghostty = match ghostty_key_event_from_terminal_key(&key) {
-                Some(event) => pane
+                Ok(event) => pane
                     .key_encoder
                     .lock()
                     .unwrap()
                     .encode(&event)
                     .map(|bytes| parity_bytes(&bytes))
                     .unwrap_or_else(|error| format!("error:{error}")),
-                None => "unmapped".to_owned(),
+                Err(GhosttyKeyEventAdapterError::UnsupportedKey) => "unmapped".to_owned(),
+                Err(error) => format!("error:{error:?}"),
             };
             if ghostty != parity_bytes(&expected) {
                 observed.insert(("ghostty".to_owned(), case.family.to_owned()), ghostty);
@@ -4556,6 +4620,107 @@ mod tests {
         assert_eq!(
             kitty.encode_terminal_key(key, crate::input::KeyboardProtocol::Kitty { flags: 3 }),
             b"\x1b[9;5u"
+        );
+    }
+
+    #[test]
+    fn ghostty_intentional_key_suppression_does_not_fall_back() {
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
+        let protocol = crate::input::KeyboardProtocol::Legacy;
+
+        let backspace = crate::input::TerminalKey::new(
+            crossterm::event::KeyCode::Backspace,
+            crossterm::event::KeyModifiers::empty(),
+        )
+        .with_generated_text(Some("x".to_owned()))
+        .with_repeat_count(3);
+        assert_eq!(
+            pane.encode_terminal_key_once_outcome(backspace.clone(), protocol),
+            KeyEncodingOutcome::Suppressed
+        );
+        assert_eq!(pane.encode_terminal_key(backspace, protocol), b"");
+
+        let enter = crate::input::TerminalKey::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::empty(),
+        )
+        .with_generated_text(Some("x".to_owned()));
+        assert_eq!(
+            pane.encode_terminal_key_once_outcome(enter.clone(), protocol),
+            KeyEncodingOutcome::Encoded(b"x".to_vec())
+        );
+        assert_eq!(pane.encode_terminal_key(enter, protocol), b"x");
+    }
+
+    #[test]
+    fn ghostty_unmapped_key_is_unavailable_not_suppressed() {
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
+
+        let key = crate::input::TerminalKey::new(
+            crossterm::event::KeyCode::F(26),
+            crossterm::event::KeyModifiers::empty(),
+        )
+        .with_generated_text(Some("fallback".to_owned()));
+        assert_eq!(
+            pane.encode_terminal_key_once_outcome(
+                key.clone(),
+                crate::input::KeyboardProtocol::Legacy,
+            ),
+            KeyEncodingOutcome::Unavailable(KeyEncodingUnavailable::Adapter(
+                GhosttyKeyEventAdapterError::UnsupportedKey,
+            ))
+        );
+        assert_eq!(
+            pane.encode_terminal_key(key, crate::input::KeyboardProtocol::Legacy),
+            b"fallback"
+        );
+    }
+
+    #[test]
+    fn grouped_repeats_use_the_ghostty_encoder() {
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
+        let key = crate::input::TerminalKey::new(
+            crossterm::event::KeyCode::Up,
+            crossterm::event::KeyModifiers::empty(),
+        )
+        .with_repeat_count(3);
+
+        assert_eq!(
+            pane.encode_terminal_key(key, crate::input::KeyboardProtocol::Legacy),
+            b"\x1b[A\x1b[A\x1b[A"
+        );
+    }
+
+    #[test]
+    fn poisoned_key_encoder_is_unavailable_and_uses_compatibility_encoder() {
+        let (tx, _rx) = mpsc::channel(4);
+        let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+        let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = pane.key_encoder.lock().unwrap();
+            panic!("poison key encoder for test");
+        }));
+        let key = crate::input::TerminalKey::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::empty(),
+        );
+
+        assert_eq!(
+            pane.encode_terminal_key_once_outcome(
+                key.clone(),
+                crate::input::KeyboardProtocol::Legacy,
+            ),
+            KeyEncodingOutcome::Unavailable(KeyEncodingUnavailable::EncoderLockPoisoned)
+        );
+        assert_eq!(
+            pane.encode_terminal_key(key, crate::input::KeyboardProtocol::Legacy),
+            b"\r"
         );
     }
 
