@@ -202,17 +202,21 @@ impl RawInputFramer {
     fn events_from_chunks(chunks: Vec<Vec<u8>>) -> Vec<RawInputEvent> {
         chunks
             .into_iter()
-            .filter_map(|chunk| {
+            .map(|chunk| {
                 if chunk.as_slice() == [ESC] {
-                    return Some(RawInputEvent::Key(
+                    return RawInputEvent::Key(
                         TerminalKey::new(crossterm::event::KeyCode::Esc, KeyModifiers::empty())
                             .with_vt_bytes(chunk),
-                    ));
+                    );
                 }
-                extract_one_event(&chunk).map(|(event, _consumed)| {
-                    tracing::debug!(raw_bytes = ?chunk, event = ?event, "raw input event parsed");
-                    event
-                })
+                let event = match decode_one_event(&chunk) {
+                    RawInputDecodeOutcome::Complete { event, .. } => event,
+                    RawInputDecodeOutcome::Unsupported { .. } | RawInputDecodeOutcome::NeedMore => {
+                        RawInputEvent::Unsupported
+                    }
+                };
+                tracing::debug!(raw_bytes = ?chunk, event = ?event, "raw input event parsed");
+                event
             })
             .collect()
     }
@@ -576,8 +580,12 @@ impl RawInputByteFramer {
                 continue;
             }
 
-            let Some((event, consumed)) = extract_one_event(&self.buffer) else {
-                break;
+            let (event, consumed) = match decode_one_event(&self.buffer) {
+                RawInputDecodeOutcome::Complete { event, consumed } => (event, consumed),
+                RawInputDecodeOutcome::Unsupported { consumed } => {
+                    (RawInputEvent::Unsupported, consumed)
+                }
+                RawInputDecodeOutcome::NeedMore => break,
             };
             if matches!(
                 event,
@@ -878,83 +886,154 @@ fn poll_read_ready(fd: i32, timeout_ms: i32) -> Option<bool> {
     }
 }
 
-fn extract_one_event(buffer: &[u8]) -> Option<(RawInputEvent, usize)> {
+enum RawInputDecodeOutcome {
+    Complete {
+        event: RawInputEvent,
+        consumed: usize,
+    },
+    NeedMore,
+    Unsupported {
+        consumed: usize,
+    },
+}
+
+fn decode_one_event(buffer: &[u8]) -> RawInputDecodeOutcome {
     if buffer.is_empty() {
-        return None;
+        return RawInputDecodeOutcome::NeedMore;
     }
 
     if buffer.starts_with(BRACKETED_PASTE_START) {
-        let end = find_subsequence(buffer, BRACKETED_PASTE_END)?;
-        let content = std::str::from_utf8(&buffer[BRACKETED_PASTE_START.len()..end]).ok()?;
-        return Some((
-            RawInputEvent::Paste(content.to_string()),
-            end + BRACKETED_PASTE_END.len(),
-        ));
+        let Some(end) = find_subsequence(buffer, BRACKETED_PASTE_END) else {
+            return RawInputDecodeOutcome::NeedMore;
+        };
+        let consumed = end + BRACKETED_PASTE_END.len();
+        let Ok(content) = std::str::from_utf8(&buffer[BRACKETED_PASTE_START.len()..end]) else {
+            return RawInputDecodeOutcome::Unsupported { consumed };
+        };
+        return RawInputDecodeOutcome::Complete {
+            event: RawInputEvent::Paste(content.to_string()),
+            consumed,
+        };
     }
 
     if buffer[0] == ESC {
-        let seq_len = complete_escape_sequence_len(buffer)?;
+        let seq_len = match frame_escape_sequence(buffer) {
+            EscapeFrameOutcome::Complete(len) => len,
+            EscapeFrameOutcome::NeedMore => return RawInputDecodeOutcome::NeedMore,
+            EscapeFrameOutcome::Unsupported(consumed) => {
+                return RawInputDecodeOutcome::Unsupported { consumed };
+            }
+        };
         if buffer[..seq_len].starts_with(b"\x1b[M") {
-            let event = parse_default_mouse(&buffer[..seq_len])
-                .map(RawInputEvent::Mouse)
-                .unwrap_or(RawInputEvent::Unsupported);
-            return Some((event, seq_len));
+            return match parse_default_mouse(&buffer[..seq_len]) {
+                Some(mouse) => RawInputDecodeOutcome::Complete {
+                    event: RawInputEvent::Mouse(mouse),
+                    consumed: seq_len,
+                },
+                None => RawInputDecodeOutcome::Unsupported { consumed: seq_len },
+            };
         }
-        let seq = std::str::from_utf8(&buffer[..seq_len]).ok()?;
+        let Ok(seq) = std::str::from_utf8(&buffer[..seq_len]) else {
+            return RawInputDecodeOutcome::Unsupported { consumed: seq_len };
+        };
 
         if let Some((kind, color)) = parse_default_color_response(seq) {
-            return Some((RawInputEvent::HostDefaultColor { kind, color }, seq_len));
+            return RawInputDecodeOutcome::Complete {
+                event: RawInputEvent::HostDefaultColor { kind, color },
+                consumed: seq_len,
+            };
         }
         if let Some((index, color)) = parse_palette_color_response(seq) {
-            return Some((
-                RawInputEvent::HostPaletteColors {
+            return RawInputDecodeOutcome::Complete {
+                event: RawInputEvent::HostPaletteColors {
                     colors: vec![(index, color)],
                 },
-                seq_len,
-            ));
+                consumed: seq_len,
+            };
         }
 
         match seq {
-            "\x1b[I" => return Some((RawInputEvent::OuterFocusGained, seq_len)),
-            "\x1b[O" => return Some((RawInputEvent::OuterFocusLost, seq_len)),
+            "\x1b[I" => {
+                return RawInputDecodeOutcome::Complete {
+                    event: RawInputEvent::OuterFocusGained,
+                    consumed: seq_len,
+                };
+            }
+            "\x1b[O" => {
+                return RawInputDecodeOutcome::Complete {
+                    event: RawInputEvent::OuterFocusLost,
+                    consumed: seq_len,
+                };
+            }
             _ => {}
         }
 
         if let Some(appearance) = parse_host_color_scheme_report(&buffer[..seq_len]) {
-            return Some((RawInputEvent::HostColorSchemeChanged(appearance), seq_len));
+            return RawInputDecodeOutcome::Complete {
+                event: RawInputEvent::HostColorSchemeChanged(appearance),
+                consumed: seq_len,
+            };
         }
 
         if let Some((width_px, height_px)) = parse_host_cell_size_report(&buffer[..seq_len]) {
-            return Some((
-                RawInputEvent::HostCellSizeReport {
+            return RawInputDecodeOutcome::Complete {
+                event: RawInputEvent::HostCellSizeReport {
                     width_px,
                     height_px,
                 },
-                seq_len,
-            ));
+                consumed: seq_len,
+            };
         }
 
         if let Some(mouse) = parse_sgr_mouse(seq) {
-            return Some((RawInputEvent::Mouse(mouse), seq_len));
+            return RawInputDecodeOutcome::Complete {
+                event: RawInputEvent::Mouse(mouse),
+                consumed: seq_len,
+            };
         }
 
         if let Some(key) = parse_terminal_key_sequence(seq) {
-            return Some((
-                RawInputEvent::Key(key.with_vt_bytes(buffer[..seq_len].to_vec())),
-                seq_len,
-            ));
+            return RawInputDecodeOutcome::Complete {
+                event: RawInputEvent::Key(key.with_vt_bytes(buffer[..seq_len].to_vec())),
+                consumed: seq_len,
+            };
         }
 
         tracing::debug!(sequence = ?seq, "dropping unsupported escape sequence");
-        return Some((RawInputEvent::Unsupported, seq_len));
+        return RawInputDecodeOutcome::Unsupported { consumed: seq_len };
     }
 
-    let consumed = first_complete_utf8_char_len(buffer)?;
-    let text = std::str::from_utf8(&buffer[..consumed]).ok()?;
-    let key = parse_terminal_key_sequence(text)?
-        .with_text_commit()
-        .with_vt_bytes(buffer[..consumed].to_vec());
-    Some((RawInputEvent::Key(key), consumed))
+    let Some(consumed) = first_complete_utf8_char_len(buffer) else {
+        return if starts_with_incomplete_utf8_char(buffer) {
+            RawInputDecodeOutcome::NeedMore
+        } else {
+            RawInputDecodeOutcome::Unsupported { consumed: 1 }
+        };
+    };
+    let Ok(text) = std::str::from_utf8(&buffer[..consumed]) else {
+        return RawInputDecodeOutcome::Unsupported { consumed };
+    };
+    let Some(key) = parse_terminal_key_sequence(text) else {
+        return RawInputDecodeOutcome::Unsupported { consumed };
+    };
+    RawInputDecodeOutcome::Complete {
+        event: RawInputEvent::Key(
+            key.with_text_commit()
+                .with_vt_bytes(buffer[..consumed].to_vec()),
+        ),
+        consumed,
+    }
+}
+
+#[cfg(test)]
+fn extract_one_event(buffer: &[u8]) -> Option<(RawInputEvent, usize)> {
+    match decode_one_event(buffer) {
+        RawInputDecodeOutcome::Complete { event, consumed } => Some((event, consumed)),
+        RawInputDecodeOutcome::Unsupported { consumed } => {
+            Some((RawInputEvent::Unsupported, consumed))
+        }
+        RawInputDecodeOutcome::NeedMore => None,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1088,16 +1167,22 @@ fn csi_sequence_offset(buffer: &[u8]) -> Option<usize> {
     (escape_count > 0 && buffer.get(escape_count) == Some(&b'[')).then(|| escape_count - 1)
 }
 
-fn complete_escape_sequence_len(buffer: &[u8]) -> Option<usize> {
+enum EscapeFrameOutcome {
+    Complete(usize),
+    NeedMore,
+    Unsupported(usize),
+}
+
+fn frame_escape_sequence(buffer: &[u8]) -> EscapeFrameOutcome {
     if buffer.len() == 1 {
-        return None;
+        return EscapeFrameOutcome::NeedMore;
     }
 
     if buffer.starts_with(b"\x1b\x1b[<") {
         if let Some(mouse_len) = find_csi_final(&buffer[1..], b"Mm") {
-            let mouse_sequence = std::str::from_utf8(&buffer[1..1 + mouse_len]).ok()?;
-            if parse_sgr_mouse(mouse_sequence).is_some() {
-                return Some(1);
+            let mouse_sequence = std::str::from_utf8(&buffer[1..1 + mouse_len]);
+            if mouse_sequence.ok().and_then(parse_sgr_mouse).is_some() {
+                return EscapeFrameOutcome::Complete(1);
             }
         }
     }
@@ -1106,50 +1191,86 @@ fn complete_escape_sequence_len(buffer: &[u8]) -> Option<usize> {
         && buffer.starts_with(b"\x1b\x1b[M")
         && parse_default_mouse(&buffer[1..7]).is_some()
     {
-        return Some(1);
+        return EscapeFrameOutcome::Complete(1);
     }
 
     let escape_count = buffer.iter().take_while(|byte| **byte == ESC).count();
     if escape_count > MAX_LEGACY_ESCAPE_PREFIXES {
-        return Some(1);
+        return EscapeFrameOutcome::Complete(1);
     }
     let escape_offset = escape_count.saturating_sub(1);
     let sequence = &buffer[escape_offset..];
-    complete_single_escape_sequence_len(sequence).map(|len| escape_offset + len)
+    match frame_single_escape_sequence(sequence) {
+        EscapeFrameOutcome::Complete(len) => EscapeFrameOutcome::Complete(escape_offset + len),
+        EscapeFrameOutcome::Unsupported(consumed) => {
+            EscapeFrameOutcome::Unsupported(escape_offset + consumed)
+        }
+        EscapeFrameOutcome::NeedMore => EscapeFrameOutcome::NeedMore,
+    }
 }
 
-fn complete_single_escape_sequence_len(buffer: &[u8]) -> Option<usize> {
+fn frame_single_escape_sequence(buffer: &[u8]) -> EscapeFrameOutcome {
     if buffer.len() == 1 {
-        return None;
+        return EscapeFrameOutcome::NeedMore;
     }
 
     if buffer.starts_with(b"\x1b[") {
         if buffer.starts_with(b"\x1b[<") {
-            return find_csi_final(buffer, b"Mm");
+            return frame_csi_sequence(buffer, b"Mm");
         }
         if buffer.starts_with(b"\x1b[M") {
-            return (buffer.len() >= 6).then_some(6);
+            return if buffer.len() >= 6 {
+                EscapeFrameOutcome::Complete(6)
+            } else {
+                EscapeFrameOutcome::NeedMore
+            };
         }
-        return find_csi_final(buffer, CSI_FINAL_BYTES);
+        return frame_csi_sequence(buffer, CSI_FINAL_BYTES);
     }
 
     if let Some(control) = control_string(buffer) {
         return match control {
-            ControlString::Complete { len, .. } => Some(len),
-            ControlString::Incomplete { .. } => None,
+            ControlString::Complete { len, .. } => EscapeFrameOutcome::Complete(len),
+            ControlString::Incomplete { .. } => EscapeFrameOutcome::NeedMore,
         };
     }
 
     if buffer.starts_with(b"\x1bO") {
-        return (buffer.len() >= 3).then_some(3);
+        return if buffer.len() >= 3 {
+            EscapeFrameOutcome::Complete(3)
+        } else {
+            EscapeFrameOutcome::NeedMore
+        };
     }
 
-    let escaped_char_width = utf8_char_width(buffer[1])?;
-    if buffer.len() < 1 + escaped_char_width {
-        return None;
+    let Some(escaped_char_width) = utf8_char_width(buffer[1]) else {
+        return EscapeFrameOutcome::Unsupported(2);
+    };
+    let escaped = &buffer[1..buffer.len().min(1 + escaped_char_width)];
+    match std::str::from_utf8(escaped) {
+        Ok(_) if escaped.len() == escaped_char_width => {
+            EscapeFrameOutcome::Complete(1 + escaped_char_width)
+        }
+        Ok(_) => EscapeFrameOutcome::NeedMore,
+        Err(error) if error.error_len().is_none() => EscapeFrameOutcome::NeedMore,
+        Err(error) => EscapeFrameOutcome::Unsupported(1 + error.error_len().unwrap_or(1)),
     }
-    std::str::from_utf8(&buffer[1..1 + escaped_char_width]).ok()?;
-    Some(1 + escaped_char_width)
+}
+
+fn frame_csi_sequence(buffer: &[u8], allowed_finals: &[u8]) -> EscapeFrameOutcome {
+    let mut intermediates_started = false;
+    for (index, byte) in buffer.iter().copied().enumerate().skip(2) {
+        match byte {
+            0x30..=0x3f if !intermediates_started => {}
+            0x20..=0x2f => intermediates_started = true,
+            0x40..=0x7e if allowed_finals.contains(&byte) => {
+                return EscapeFrameOutcome::Complete(index + 1);
+            }
+            0x40..=0x7e => return EscapeFrameOutcome::Unsupported(index + 1),
+            _ => return EscapeFrameOutcome::Unsupported(index),
+        }
+    }
+    EscapeFrameOutcome::NeedMore
 }
 
 fn starts_with_incomplete_sgr_mouse_sequence(buffer: &[u8]) -> bool {
@@ -1484,6 +1605,40 @@ mod tests {
     fn drain_chunk(buffer: &mut Vec<u8>, tx: &mpsc::Sender<RawInputEvent>, chunk: &[u8]) {
         buffer.extend_from_slice(chunk);
         drain_buffer(buffer, tx);
+    }
+
+    #[test]
+    fn raw_decoder_distinguishes_complete_partial_and_unsupported() {
+        let RawInputDecodeOutcome::Complete { event, consumed } = decode_one_event(b"\x1b[Arest")
+        else {
+            panic!("expected complete event");
+        };
+        assert!(matches!(event, RawInputEvent::Key(_)));
+        assert_eq!(consumed, 3);
+
+        assert!(matches!(
+            decode_one_event(b"\x1b[1;"),
+            RawInputDecodeOutcome::NeedMore
+        ));
+        assert!(matches!(
+            decode_one_event(b"\x1b[14;3~x"),
+            RawInputDecodeOutcome::Unsupported { consumed: 7 }
+        ));
+    }
+
+    #[test]
+    fn malformed_escape_sequences_do_not_consume_following_keys() {
+        for input in [b"\x1b\xc2x".as_slice(), b"\x1b[\xc2x".as_slice()] {
+            let events = parse_raw_input_bytes_sync(input);
+
+            assert!(events.len() >= 2, "{input:?}");
+            assert!(matches!(events[0], RawInputEvent::Unsupported));
+            assert_raw_key(
+                events.into_iter().last().unwrap(),
+                KeyCode::Char('x'),
+                KeyModifiers::empty(),
+            );
+        }
     }
 
     #[test]
@@ -2531,11 +2686,16 @@ mod tests {
     }
 
     #[test]
-    fn invalid_utf8_lead_byte_is_flushed_instead_of_buffered_forever() {
-        let mut buffer = vec![0xC0];
+    fn invalid_utf8_is_unsupported_without_losing_following_input() {
+        let events = parse_raw_input_bytes_sync(&[0xC2, b'x']);
 
-        assert_eq!(flush_incomplete_input_bytes(&mut buffer), None);
-        assert!(buffer.is_empty());
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], RawInputEvent::Unsupported));
+        assert_raw_key(
+            events.into_iter().last().unwrap(),
+            KeyCode::Char('x'),
+            KeyModifiers::empty(),
+        );
     }
 
     #[test]
