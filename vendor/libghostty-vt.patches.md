@@ -77,8 +77,7 @@ verification:
 
 ```sh
 cd vendor/libghostty-vt && zig build test-lib-vt -Dsimd=true
-just test-one keyboard_encoder_differences_are_explicit
-just test-one keyboard_protocol_corpus
+just test-one keyboard_corpus_survives_fragmentation_and_pane_encoding
 ```
 
 ## 0003 report Kitty repeat events
@@ -110,8 +109,7 @@ verification:
 
 ```sh
 cd vendor/libghostty-vt && zig build test-lib-vt -Dsimd=true
-just test-one keyboard_encoder_differences_are_explicit
-just test-one keyboard_protocol_corpus
+just test-one keyboard_corpus_survives_fragmentation_and_pane_encoding
 ```
 
 ## 0004 encode extended function keys
@@ -145,7 +143,6 @@ verification:
 
 ```sh
 cd vendor/libghostty-vt && zig build test-lib-vt -Dsimd=true
-just test-one keyboard_encoder_differences_are_explicit
 just test-one keyboard_corpus_survives_fragmentation_and_pane_encoding
 ```
 

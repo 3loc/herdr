@@ -112,11 +112,6 @@ impl TerminalKey {
         self
     }
 
-    pub(crate) fn with_modifiers(mut self, modifiers: KeyModifiers) -> Self {
-        self.modifiers = modifiers;
-        self
-    }
-
     pub fn with_shifted_codepoint(mut self, shifted_codepoint: u32) -> Self {
         self.shifted_codepoint = Some(shifted_codepoint);
         self

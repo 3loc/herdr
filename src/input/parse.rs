@@ -393,7 +393,6 @@ mod tests {
     use crossterm::event::{KeyCode, KeyModifiers, ModifierKeyCode};
 
     use super::*;
-    use crate::input::{encode_terminal_key, KeyboardProtocol};
 
     fn assert_terminal_key_eq(
         actual: TerminalKey,
@@ -568,13 +567,12 @@ mod tests {
     fn parse_legacy_alt_shift_letter_preserves_shift() {
         let key = parse_terminal_key_sequence("\x1bA").expect("alt-shift letter should parse");
         assert_terminal_key_eq(
-            key.clone(),
+            key,
             KeyCode::Char('A'),
             KeyModifiers::ALT | KeyModifiers::SHIFT,
             crossterm::event::KeyEventKind::Press,
             None,
         );
-        assert_eq!(encode_terminal_key(key, KeyboardProtocol::Legacy), b"\x1bA");
     }
 
     #[test]
@@ -582,15 +580,11 @@ mod tests {
         let key = parse_terminal_key_sequence("\x1b\x06")
             .expect("ctrl-alt-f legacy sequence should parse");
         assert_terminal_key_eq(
-            key.clone(),
+            key,
             KeyCode::Char('f'),
             KeyModifiers::CONTROL | KeyModifiers::ALT,
             crossterm::event::KeyEventKind::Press,
             None,
-        );
-        assert_eq!(
-            encode_terminal_key(key, KeyboardProtocol::Legacy),
-            b"\x1b\x06"
         );
     }
 
@@ -890,12 +884,6 @@ mod tests {
         let key = parse_terminal_key_sequence("\n").unwrap();
         assert_eq!(key.code, KeyCode::Char('j'));
         assert_eq!(key.modifiers, KeyModifiers::CONTROL);
-    }
-
-    #[test]
-    fn legacy_lf_roundtrips_as_lf() {
-        let key = parse_terminal_key_sequence("\n").unwrap();
-        assert_eq!(encode_terminal_key(key, KeyboardProtocol::Legacy), b"\n");
     }
 
     #[test]

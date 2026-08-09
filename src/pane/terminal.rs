@@ -1820,7 +1820,7 @@ impl GhosttyPaneTerminal {
     pub fn encode_terminal_key(
         &self,
         key: crate::input::TerminalKey,
-        protocol: crate::input::KeyboardProtocol,
+        _protocol: crate::input::KeyboardProtocol,
     ) -> Vec<u8> {
         #[cfg(windows)]
         if self.core.lock().is_ok_and(|core| {
@@ -1836,10 +1836,10 @@ impl GhosttyPaneTerminal {
 
         let repeat_count = key.repeat_count;
         let first = key.with_repeat_count(1);
-        let mut bytes = self.encode_terminal_key_once(first.clone(), protocol);
+        let mut bytes = self.encode_terminal_key_once(first.clone());
         if repeat_count > 1 && first.kind != crossterm::event::KeyEventKind::Release {
             let repeated = first.with_kind(crossterm::event::KeyEventKind::Repeat);
-            let repeated_bytes = self.encode_terminal_key_once(repeated, protocol);
+            let repeated_bytes = self.encode_terminal_key_once(repeated);
             for _ in 1..repeat_count {
                 bytes.extend_from_slice(&repeated_bytes);
             }
@@ -1847,18 +1847,13 @@ impl GhosttyPaneTerminal {
         bytes
     }
 
-    fn encode_terminal_key_once(
-        &self,
-        key: crate::input::TerminalKey,
-        protocol: crate::input::KeyboardProtocol,
-    ) -> Vec<u8> {
-        let fallback_key = key.clone();
+    fn encode_terminal_key_once(&self, key: crate::input::TerminalKey) -> Vec<u8> {
         match self.encode_terminal_key_once_outcome(key) {
             KeyEncodingOutcome::Encoded(bytes) => bytes,
             KeyEncodingOutcome::Suppressed => Vec::new(),
             KeyEncodingOutcome::Unavailable(reason) => {
                 log_key_encoding_unavailable(reason);
-                crate::input::encode_terminal_key(fallback_key, protocol)
+                Vec::new()
             }
         }
     }
@@ -2205,10 +2200,7 @@ fn log_key_encoding_unavailable(reason: KeyEncodingUnavailable) {
 
     let first_failure = match reason {
         KeyEncodingUnavailable::Adapter(GhosttyKeyEventAdapterError::UnsupportedKey) => {
-            debug!(
-                ?reason,
-                "Ghostty key encoding unavailable; using compatibility encoder"
-            );
+            debug!(?reason, "Ghostty key encoding unavailable; suppressing key");
             return;
         }
         KeyEncodingUnavailable::Adapter(GhosttyKeyEventAdapterError::EventAllocation) => {
@@ -2218,10 +2210,7 @@ fn log_key_encoding_unavailable(reason: KeyEncodingUnavailable) {
         KeyEncodingUnavailable::EncoderError => &ENCODER_ERROR_LOGGED,
     };
     if !first_failure.swap(true, Ordering::Relaxed) {
-        error!(
-            ?reason,
-            "Ghostty key encoding failed; using compatibility encoder"
-        );
+        error!(?reason, "Ghostty key encoding failed; suppressing key");
     }
 }
 
@@ -3474,93 +3463,6 @@ mod tests {
         }
     }
 
-    fn parity_bytes(bytes: &[u8]) -> String {
-        use std::fmt::Write;
-
-        if bytes.is_empty() {
-            return "empty".to_owned();
-        }
-        bytes.iter().fold(String::new(), |mut output, byte| {
-            write!(&mut output, "{byte:02x}").unwrap();
-            output
-        })
-    }
-
-    #[test]
-    fn keyboard_encoder_differences_are_explicit() {
-        use std::collections::BTreeMap;
-
-        let corpus = include_str!("../../tests/fixtures/keyboard_protocol_corpus.tsv");
-        let mut observed = BTreeMap::new();
-        for case in crate::input::test_support::keyboard_corpus_cases(corpus) {
-            let key = corpus_key_from_chunks(&case, &[case.input.as_slice()]);
-            let pane = corpus_pane(case.pane_profile);
-            let protocol = pane.keyboard_protocol().expect("pane keyboard protocol");
-            let expected = crate::input::test_support::decode_hex(case.expected_pane_hex);
-
-            let rust = crate::input::encode_terminal_key(key.clone(), protocol);
-            if rust != expected {
-                observed.insert(
-                    ("rust".to_owned(), case.family.to_owned()),
-                    parity_bytes(&rust),
-                );
-            }
-
-            let ghostty = match ghostty_key_event_from_terminal_key(&key) {
-                Ok(event) => pane
-                    .key_encoder
-                    .lock()
-                    .unwrap()
-                    .encode(&event)
-                    .map(|bytes| parity_bytes(&bytes))
-                    .unwrap_or_else(|error| format!("error:{error}")),
-                Err(GhosttyKeyEventAdapterError::UnsupportedKey) => "unmapped".to_owned(),
-                Err(error) => format!("error:{error:?}"),
-            };
-            if ghostty != parity_bytes(&expected) {
-                observed.insert(("ghostty".to_owned(), case.family.to_owned()), ghostty);
-            }
-        }
-
-        let classifications = include_str!("../../tests/fixtures/keyboard_encoder_differences.tsv");
-        for line in classifications.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let columns: Vec<_> = line.split('\t').collect();
-            assert_eq!(
-                columns.len(),
-                4,
-                "difference row must have 4 columns: {line}"
-            );
-            assert!(
-                matches!(
-                    columns[2],
-                    "pane_mode_owned_by_ghostty"
-                        | "adapter_unmapped_key"
-                        | "kitty_text_policy"
-                        | "duplicate_encoder_gap"
-                        | "equivalent_press_suffix"
-                        | "missing_modifier"
-                        | "adapter_generated_text_loss"
-                        | "adapter_base_layout_loss"
-                ),
-                "unknown difference category: {}",
-                columns[2]
-            );
-            let key = (columns[0].to_owned(), columns[1].to_owned());
-            let actual = observed
-                .remove(&key)
-                .unwrap_or_else(|| panic!("stale encoder difference: {line}"));
-            assert_eq!(actual, columns[3], "encoder difference changed: {line}");
-        }
-        assert!(
-            observed.is_empty(),
-            "unclassified encoder differences: {observed:#?}"
-        );
-    }
-
     #[test]
     fn keyboard_corpus_preserves_coalesced_event_order_and_sources() {
         let corpus = include_str!("../../tests/fixtures/keyboard_protocol_corpus.tsv");
@@ -4664,7 +4566,7 @@ mod tests {
     }
 
     #[test]
-    fn ghostty_unmapped_key_is_unavailable_not_suppressed() {
+    fn unavailable_ghostty_key_is_suppressed_without_a_second_encoder() {
         let (tx, _rx) = mpsc::channel(4);
         let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
         let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
@@ -4682,7 +4584,7 @@ mod tests {
         );
         assert_eq!(
             pane.encode_terminal_key(key, crate::input::KeyboardProtocol::Legacy),
-            b"fallback"
+            b""
         );
     }
 
@@ -4704,7 +4606,7 @@ mod tests {
     }
 
     #[test]
-    fn poisoned_key_encoder_is_unavailable_and_uses_compatibility_encoder() {
+    fn poisoned_key_encoder_is_unavailable_and_suppresses_the_key() {
         let (tx, _rx) = mpsc::channel(4);
         let terminal = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
         let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
@@ -4723,7 +4625,7 @@ mod tests {
         );
         assert_eq!(
             pane.encode_terminal_key(key, crate::input::KeyboardProtocol::Legacy),
-            b"\r"
+            b""
         );
     }
 

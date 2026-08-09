@@ -852,9 +852,8 @@ mod windows_tests {
         assert_eq!(windows_key_raw_bytes(&ctrl_shift_bracket, false), None);
     }
 
-    #[cfg(windows)]
-    #[test]
-    fn windows_ctrl_d_semantic_event_encodes_to_eot() {
+    #[tokio::test]
+    async fn windows_ctrl_d_reaches_the_pane_as_eot() {
         let event = Event::Key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
         assert_eq!(windows_key_raw_bytes(&event, false), None);
 
@@ -866,10 +865,12 @@ mod windows_tests {
         };
         assert_eq!(key.code, KeyCode::Char('d'));
         assert_eq!(key.modifiers, KeyModifiers::CONTROL);
-        assert_eq!(
-            crate::input::encode_terminal_key(key, crate::input::KeyboardProtocol::Legacy),
-            b"\x04"
-        );
+
+        let (runtime, _rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                80, 24, 0, b"", 1,
+            );
+        assert_eq!(runtime.encode_terminal_key(key), b"\x04");
     }
 
     #[test]

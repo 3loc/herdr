@@ -6,9 +6,7 @@ mod parse;
 pub(crate) mod test_support;
 
 #[allow(unused_imports)]
-pub use encode::{
-    encode_cursor_key, encode_key, encode_mouse_button, encode_mouse_scroll, encode_terminal_key,
-};
+pub use encode::{encode_mouse_button, encode_mouse_scroll};
 #[cfg(not(windows))]
 pub use model::ime_compatible_keyboard_enhancement_flags;
 pub use model::{
