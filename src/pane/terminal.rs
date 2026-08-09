@@ -5014,7 +5014,11 @@ mod tests {
             unicode: 0x1f,
             control_key_state: 0x0008,
         });
-        assert_eq!(pane.encode_terminal_key(windows), b"\x1f");
+        let encoded = pane.encode_terminal_key(windows);
+        #[cfg(not(windows))]
+        assert_eq!(encoded, b"\x1f");
+        #[cfg(windows)]
+        assert_eq!(encoded, b"\x1b[189;12;31;1;8;1_");
     }
 
     #[test]
