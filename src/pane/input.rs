@@ -194,6 +194,9 @@ pub(super) fn ghostty_mouse_event_from_wheel_kind(
 }
 
 fn ghostty_key_text(key: &crate::input::TerminalKey) -> Option<String> {
+    if let Some(text) = &key.generated_text {
+        return Some(text.clone());
+    }
     match key.code {
         crossterm::event::KeyCode::Char(c) => Some(
             key.shifted_codepoint
@@ -257,11 +260,8 @@ fn ghostty_key_from_crossterm_key_code(
 fn ghostty_key_from_char(c: char, shifted_codepoint: Option<u32>) -> Option<u32> {
     use crate::ghostty::ffi;
 
-    let base = if let Some(shifted) = shifted_codepoint.and_then(char::from_u32) {
-        ghostty_unshifted_ascii_pair(shifted).unwrap_or(c)
-    } else {
-        c
-    };
+    let reported = shifted_codepoint.and_then(char::from_u32).unwrap_or(c);
+    let base = ghostty_unshifted_ascii_pair(reported).unwrap_or(c);
 
     match base.to_ascii_lowercase() {
         'a' => Some(ffi::GhosttyKey_GHOSTTY_KEY_A),
@@ -312,7 +312,7 @@ fn ghostty_key_from_char(c: char, shifted_codepoint: Option<u32>) -> Option<u32>
         ';' => Some(ffi::GhosttyKey_GHOSTTY_KEY_SEMICOLON),
         '/' => Some(ffi::GhosttyKey_GHOSTTY_KEY_SLASH),
         ' ' => Some(ffi::GhosttyKey_GHOSTTY_KEY_SPACE),
-        _ => None,
+        _ => Some(ffi::GhosttyKey_GHOSTTY_KEY_UNIDENTIFIED),
     }
 }
 
