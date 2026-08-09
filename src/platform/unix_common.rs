@@ -119,6 +119,51 @@ fn fits_unix_socket_path(path: &Path) -> bool {
     path.as_os_str().as_bytes().len() <= 103
 }
 
+/// The machine's node name, as shown by tmux's `#h`.
+pub(crate) fn hostname() -> Option<String> {
+    let mut buffer = [0_u8; 256];
+    let result =
+        unsafe { libc::gethostname(buffer.as_mut_ptr().cast::<libc::c_char>(), buffer.len()) };
+    if result != 0 {
+        return None;
+    }
+    let end = buffer
+        .iter()
+        .position(|&byte| byte == 0)
+        .unwrap_or(buffer.len());
+    let name = String::from_utf8_lossy(&buffer[..end]).into_owned();
+    (!name.is_empty()).then_some(name)
+}
+
+pub(crate) fn local_datetime() -> Option<time::PrimitiveDateTime> {
+    let mut timestamp: libc::time_t = 0;
+    if unsafe { libc::time(&mut timestamp) } == -1 {
+        return None;
+    }
+    let mut local: libc::tm = unsafe { std::mem::zeroed() };
+    if unsafe { libc::localtime_r(&timestamp, &mut local) }.is_null() {
+        return None;
+    }
+    datetime_from_tm(&local)
+}
+
+fn datetime_from_tm(value: &libc::tm) -> Option<time::PrimitiveDateTime> {
+    let month = time::Month::try_from(u8::try_from(value.tm_mon + 1).ok()?).ok()?;
+    let date = time::Date::from_calendar_date(
+        value.tm_year + 1900,
+        month,
+        u8::try_from(value.tm_mday).ok()?,
+    )
+    .ok()?;
+    let time = time::Time::from_hms(
+        u8::try_from(value.tm_hour).ok()?,
+        u8::try_from(value.tm_min).ok()?,
+        u8::try_from(value.tm_sec).ok()?,
+    )
+    .ok()?;
+    Some(time::PrimitiveDateTime::new(date, time))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

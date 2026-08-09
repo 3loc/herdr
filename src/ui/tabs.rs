@@ -12,10 +12,11 @@ use crate::app::AppState;
 const MIN_TAB_WIDTH: u16 = 8;
 const NEW_TAB_WIDTH: u16 = 3;
 const TAB_SCROLL_BUTTON_WIDTH: u16 = 3;
-const ZOOM_INDICATOR: &str = " ZOOM ";
-// The narrowest tab strip worth keeping interactive: one minimum-width tab
-// plus the trailing controls. Decorations yield below this.
-const MIN_TAB_STRIP_WIDTH: u16 = MIN_TAB_WIDTH + NEW_TAB_WIDTH + TAB_SCROLL_BUTTON_WIDTH;
+const ZOOM_INDICATOR: &str = "ZOOM";
+// The narrowest overflowing tab strip worth keeping interactive: one
+// minimum-width tab, both scroll controls, and the new-tab control.
+const MIN_TAB_STRIP_WIDTH: u16 =
+    MIN_TAB_WIDTH + NEW_TAB_WIDTH + TAB_SCROLL_BUTTON_WIDTH.saturating_mul(2);
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TabBarView {
@@ -24,14 +25,6 @@ pub(crate) struct TabBarView {
     pub scroll_left_hit_area: Rect,
     pub scroll_right_hit_area: Rect,
     pub new_tab_hit_area: Rect,
-}
-
-fn zoom_indicator_width(ws: &crate::workspace::Workspace) -> u16 {
-    if ws.zoomed {
-        display_width_u16(ZOOM_INDICATOR).saturating_add(1)
-    } else {
-        0
-    }
 }
 
 fn tab_width(ws: &crate::workspace::Workspace, tab_idx: usize) -> u16 {
@@ -51,32 +44,63 @@ fn tab_chrome_label(ws: &crate::workspace::Workspace, tab_idx: usize) -> String 
     }
 }
 
-fn hostname_label(app: &AppState, area: Rect) -> Option<String> {
-    // Hostnames can contain arbitrary bytes; drop control characters so they
-    // can't smuggle escape sequences into the row or skew its width math.
-    let hostname: String = app
-        .tab_bar_hostname
-        .as_deref()?
-        .chars()
-        .filter(|character| !character.is_control())
-        .collect();
-    if hostname.is_empty() {
-        return None;
-    }
-    let label = format!(" {hostname} ");
-    // Tabs win over decoration: hide the hostname entirely rather than let its
-    // reservation squeeze the tab strip below a usable width.
-    let remaining = area
-        .width
-        .saturating_sub(display_width_u16(&label).saturating_add(1));
-    (remaining >= MIN_TAB_STRIP_WIDTH).then_some(label)
+#[derive(Clone, Copy)]
+struct VisibleStatusSegment<'a> {
+    text: &'a str,
+    accent: bool,
 }
 
-// The tab strip's usable area once the right edge is reserved for the
-// hostname display, so tabs and trailing controls never render underneath it.
+fn visible_status_segments(app: &AppState) -> Vec<VisibleStatusSegment<'_>> {
+    let zoomed = app
+        .active
+        .and_then(|index| app.workspaces.get(index))
+        .is_some_and(|workspace| workspace.zoomed);
+    app.tab_bar_right
+        .iter()
+        .filter_map(|segment| match segment {
+            crate::app::state::TabBarStatusSegment::Zoom if zoomed => Some(VisibleStatusSegment {
+                text: ZOOM_INDICATOR,
+                accent: true,
+            }),
+            crate::app::state::TabBarStatusSegment::Text(Some(text))
+                if display_width_u16(text) > 0 =>
+            {
+                Some(VisibleStatusSegment {
+                    text,
+                    accent: false,
+                })
+            }
+            crate::app::state::TabBarStatusSegment::Zoom
+            | crate::app::state::TabBarStatusSegment::Text(_) => None,
+        })
+        .collect()
+}
+
+fn tab_bar_status_width(app: &AppState) -> u16 {
+    let segments = visible_status_segments(app);
+    let content_width = segments.iter().fold(0_u16, |width, segment| {
+        width.saturating_add(display_width_u16(segment.text))
+    });
+    let separators = u16::try_from(segments.len().saturating_sub(1)).unwrap_or(u16::MAX);
+    content_width
+        .saturating_add(display_width_u16(&app.tab_bar_right_separator).saturating_mul(separators))
+}
+
+fn tab_bar_status_area(app: &AppState, area: Rect) -> Option<Rect> {
+    let width = tab_bar_status_width(app);
+    if width == 0 {
+        return None;
+    }
+    let reserved = width.saturating_add(1);
+    (area.width.saturating_sub(reserved) >= MIN_TAB_STRIP_WIDTH)
+        .then(|| Rect::new(area.x + area.width.saturating_sub(width), area.y, width, 1))
+}
+
+// Tabs win over status decoration on narrow rows. The extra reserved cell is
+// the gap between the interactive strip and the right-aligned status entries.
 pub(crate) fn tab_bar_content_area(app: &AppState, area: Rect) -> Rect {
-    let reserved = hostname_label(app, area)
-        .map(|label| display_width_u16(&label).saturating_add(1))
+    let reserved = tab_bar_status_area(app, area)
+        .map(|status| status.width.saturating_add(1))
         .unwrap_or(0);
     Rect {
         width: area.width.saturating_sub(reserved),
@@ -160,16 +184,6 @@ pub(crate) fn compute_tab_bar_view(
     mouse_chrome: bool,
 ) -> TabBarView {
     if area.width == 0 || area.height == 0 {
-        return TabBarView::default();
-    }
-
-    // Reserve the right edge for the zoom indicator so tabs and trailing
-    // controls never render underneath it.
-    let area = Rect {
-        width: area.width.saturating_sub(zoom_indicator_width(ws)),
-        ..area
-    };
-    if area.width == 0 {
         return TabBarView::default();
     }
 
@@ -436,7 +450,7 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
     }
     if last_visible_idx.is_some_and(|idx| idx + 1 < ws.tabs.len()) {
         let content = tab_bar_content_area(app, area);
-        let content_right = content.x + content.width.saturating_sub(zoom_indicator_width(ws));
+        let content_right = content.x + content.width;
         let x = if app.mouse_capture && app.view.tab_scroll_right_hit_area.width > 0 {
             app.view.tab_scroll_right_hit_area.x.saturating_sub(1)
         } else {
@@ -449,38 +463,34 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
         }
     }
 
-    let hostname = hostname_label(app, area);
-    let hostname_width = hostname.as_deref().map(display_width_u16).unwrap_or(0);
-    if ws.zoomed {
-        let width = display_width_u16(ZOOM_INDICATOR).min(area.width);
-        let rect = Rect::new(
-            area.x
-                + area
-                    .width
-                    .saturating_sub(hostname_width)
-                    .saturating_sub(width),
-            area.y,
-            width,
-            1,
-        );
-        frame.render_widget(
-            Paragraph::new(ZOOM_INDICATOR).style(
+    if let Some(status_area) = tab_bar_status_area(app, area) {
+        let segments = visible_status_segments(app);
+        let separator_width = display_width_u16(&app.tab_bar_right_separator);
+        let mut x = status_area.x;
+        for (index, segment) in segments.iter().enumerate() {
+            if index > 0 && separator_width > 0 {
+                let rect = Rect::new(x, area.y, separator_width, 1);
+                frame.render_widget(
+                    Paragraph::new(app.tab_bar_right_separator.as_str())
+                        .style(Style::default().fg(p.overlay0).bg(p.panel_bg)),
+                    rect,
+                );
+                x = x.saturating_add(separator_width);
+            }
+
+            let width = display_width_u16(segment.text);
+            let rect = Rect::new(x, area.y, width, 1);
+            let style = if segment.accent {
                 Style::default()
                     .fg(panel_contrast_fg(p))
                     .bg(p.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            rect,
-        );
-    }
-
-    if let Some(label) = hostname {
-        let width = display_width_u16(&label).min(area.width);
-        let rect = Rect::new(area.x + area.width - width, area.y, width, 1);
-        frame.render_widget(
-            Paragraph::new(label).style(Style::default().fg(p.overlay1).bg(p.panel_bg)),
-            rect,
-        );
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(p.overlay1).bg(p.panel_bg)
+            };
+            frame.render_widget(Paragraph::new(segment.text).style(style), rect);
+            x = x.saturating_add(width);
+        }
     }
 }
 
@@ -530,18 +540,25 @@ mod tests {
     }
 
     #[test]
-    fn tab_bar_shows_zoom_indicator_at_right_edge_when_active_tab_is_zoomed() {
+    fn tab_bar_renders_ordered_status_entries_with_separator() {
         let mut app = AppState::test_new();
         let mut ws = Workspace::test_new("test");
         ws.tabs[0].zoomed = true;
+        app.tab_bar_right = vec![
+            crate::app::state::TabBarStatusSegment::Zoom,
+            crate::app::state::TabBarStatusSegment::Text(Some("wintermute".into())),
+            crate::app::state::TabBarStatusSegment::Text(Some("14:30".into())),
+        ];
+        app.tab_bar_right_separator = " · ".into();
 
         app.workspaces = vec![ws];
         app.active = Some(0);
-        app.view.tab_bar_rect = Rect::new(0, 0, 30, 1);
-        let view = compute_tab_bar_view(&app.workspaces[0], app.view.tab_bar_rect, 0, true, false);
+        app.view.tab_bar_rect = Rect::new(0, 0, 60, 1);
+        let content = tab_bar_content_area(&app, app.view.tab_bar_rect);
+        let view = compute_tab_bar_view(&app.workspaces[0], content, 0, true, false);
         app.view.tab_hit_areas = view.tab_hit_areas.clone();
 
-        let backend = TestBackend::new(30, 1);
+        let backend = TestBackend::new(60, 1);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
@@ -549,87 +566,31 @@ mod tests {
 
         let buffer = terminal.backend().buffer();
         let row = buffer_row_text(buffer, app.view.tab_bar_rect, 0);
-        assert!(row.ends_with(" ZOOM"), "tab row: {row:?}");
-        assert_eq!(buffer[(28, 0)].style().bg, Some(app.palette.accent));
-
-        // Tabs never render underneath the reserved indicator area.
-        let indicator_x = 30 - display_width_u16(ZOOM_INDICATOR) - 1;
+        assert!(
+            row.ends_with("ZOOM · wintermute · 14:30"),
+            "tab row: {row:?}"
+        );
+        let status_x = 60 - display_width_u16("ZOOM · wintermute · 14:30");
+        assert_eq!(buffer[(status_x, 0)].style().bg, Some(app.palette.accent));
         for rect in &view.tab_hit_areas {
-            assert!(rect.x + rect.width <= indicator_x, "tab overlaps indicator");
+            assert!(rect.x + rect.width <= content.x + content.width);
         }
     }
 
     #[test]
-    fn tab_bar_omits_zoom_indicator_when_active_tab_is_not_zoomed() {
+    fn hidden_status_entries_do_not_leave_dangling_separators() {
         let mut app = AppState::test_new();
-        let ws = Workspace::test_new("test");
-
-        app.workspaces = vec![ws];
-        app.active = Some(0);
-        app.view.tab_bar_rect = Rect::new(0, 0, 30, 1);
-        let view = compute_tab_bar_view(&app.workspaces[0], app.view.tab_bar_rect, 0, true, false);
-        app.view.tab_hit_areas = view.tab_hit_areas;
-
-        let backend = TestBackend::new(30, 1);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
-            .unwrap();
-
-        let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
-        assert!(!row.contains("ZOOM"), "tab row: {row:?}");
-    }
-
-    #[test]
-    fn tab_bar_shows_hostname_at_right_edge_when_enabled() {
-        let mut app = AppState::test_new();
-        app.tab_bar_hostname = Some("wintermute".into());
-        let ws = Workspace::test_new("test");
-
-        app.workspaces = vec![ws];
+        app.tab_bar_right = vec![
+            crate::app::state::TabBarStatusSegment::Zoom,
+            crate::app::state::TabBarStatusSegment::Text(None),
+            crate::app::state::TabBarStatusSegment::Text(Some("wintermute".into())),
+        ];
+        app.tab_bar_right_separator = " | ".into();
+        app.workspaces = vec![Workspace::test_new("test")];
         app.active = Some(0);
         app.view.tab_bar_rect = Rect::new(0, 0, 40, 1);
-        let view = compute_tab_bar_view(
-            &app.workspaces[0],
-            tab_bar_content_area(&app, app.view.tab_bar_rect),
-            0,
-            true,
-            false,
-        );
-        app.view.tab_hit_areas = view.tab_hit_areas.clone();
-
-        let backend = TestBackend::new(40, 1);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
-            .unwrap();
-
-        let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
-        assert!(row.ends_with(" wintermute"), "tab row: {row:?}");
-
-        // Tabs never render underneath the reserved hostname area.
-        let reserved_x = 40 - display_width_u16(" wintermute ") - 1;
-        for rect in &view.tab_hit_areas {
-            assert!(rect.x + rect.width <= reserved_x, "tab overlaps hostname");
-        }
-    }
-
-    #[test]
-    fn hostname_control_characters_are_stripped_before_rendering() {
-        let mut app = AppState::test_new();
-        app.tab_bar_hostname = Some("win\x1b[31mter\u{9b}mute\r\n".into());
-        let ws = Workspace::test_new("test");
-
-        app.workspaces = vec![ws];
-        app.active = Some(0);
-        app.view.tab_bar_rect = Rect::new(0, 0, 40, 1);
-        let view = compute_tab_bar_view(
-            &app.workspaces[0],
-            tab_bar_content_area(&app, app.view.tab_bar_rect),
-            0,
-            true,
-            false,
-        );
+        let content = tab_bar_content_area(&app, app.view.tab_bar_rect);
+        let view = compute_tab_bar_view(&app.workspaces[0], content, 0, true, false);
         app.view.tab_hit_areas = view.tab_hit_areas;
 
         let backend = TestBackend::new(40, 1);
@@ -639,37 +600,50 @@ mod tests {
             .unwrap();
 
         let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
-        assert!(row.ends_with(" win[31mtermute"), "tab row: {row:?}");
+        assert!(row.ends_with("wintermute"), "tab row: {row:?}");
+        assert!(!row.contains(" | "), "tab row: {row:?}");
     }
 
     #[test]
-    fn hostname_of_only_control_characters_is_not_rendered() {
+    fn status_reservation_keeps_a_minimum_width_tab_between_scroll_controls() {
         let mut app = AppState::test_new();
-        app.tab_bar_hostname = Some("\x1b\r\n".into());
+        app.tab_bar_right = vec![crate::app::state::TabBarStatusSegment::Text(Some(
+            "x".into(),
+        ))];
+        let mut workspace = Workspace::test_new("test");
+        workspace.test_add_tab(None);
+        workspace.test_add_tab(None);
+        app.workspaces = vec![workspace];
+        app.active = Some(0);
 
-        assert_eq!(hostname_label(&app, Rect::new(0, 0, 40, 1)), None);
-        assert_eq!(
-            tab_bar_content_area(&app, Rect::new(0, 0, 40, 1)),
-            Rect::new(0, 0, 40, 1)
-        );
+        let too_narrow = Rect::new(0, 0, MIN_TAB_STRIP_WIDTH + 1, 1);
+        assert_eq!(tab_bar_content_area(&app, too_narrow), too_narrow);
+
+        let wide_enough = Rect::new(0, 0, MIN_TAB_STRIP_WIDTH + 2, 1);
+        let content = tab_bar_content_area(&app, wide_enough);
+        assert_eq!(content.width, MIN_TAB_STRIP_WIDTH);
+        let view = compute_tab_bar_view(&app.workspaces[0], content, 0, true, true);
+        assert!(view.tab_hit_areas[0].width >= MIN_TAB_WIDTH);
     }
 
     #[test]
-    fn oversized_hostname_yields_to_tab_controls() {
+    fn combined_status_entries_yield_to_tab_controls_on_narrow_rows() {
         let mut app = AppState::test_new();
-        app.tab_bar_hostname = Some("a-hostname-wider-than-the-whole-bar".into());
-        let ws = Workspace::test_new("test");
-
-        app.workspaces = vec![ws];
+        app.tab_bar_right = vec![
+            crate::app::state::TabBarStatusSegment::Text(Some(
+                "a-hostname-wider-than-the-whole-bar".into(),
+            )),
+            crate::app::state::TabBarStatusSegment::Text(Some("14:30".into())),
+        ];
+        app.workspaces = vec![Workspace::test_new("test")];
         app.active = Some(0);
         app.view.tab_bar_rect = Rect::new(0, 0, 30, 1);
 
-        // The reservation would leave less than a usable tab strip, so the
-        // hostname is dropped and the tabs keep the full row.
         assert_eq!(
             tab_bar_content_area(&app, app.view.tab_bar_rect),
             app.view.tab_bar_rect
         );
+        assert_eq!(tab_bar_status_area(&app, app.view.tab_bar_rect), None);
 
         let view = compute_tab_bar_view(
             &app.workspaces[0],
@@ -678,50 +652,8 @@ mod tests {
             true,
             true,
         );
-        app.view.tab_hit_areas = view.tab_hit_areas.clone();
-        app.view.new_tab_hit_area = view.new_tab_hit_area;
         assert!(view.tab_hit_areas[0].width > 0);
         assert!(view.new_tab_hit_area.width > 0);
-
-        let backend = TestBackend::new(30, 1);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
-            .unwrap();
-
-        let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
-        assert!(!row.contains("hostname"), "tab row: {row:?}");
-    }
-
-    #[test]
-    fn tab_bar_omits_hostname_when_disabled() {
-        let mut app = AppState::test_new();
-        let ws = Workspace::test_new("test");
-
-        app.workspaces = vec![ws];
-        app.active = Some(0);
-        app.view.tab_bar_rect = Rect::new(0, 0, 40, 1);
-        let view = compute_tab_bar_view(
-            &app.workspaces[0],
-            tab_bar_content_area(&app, app.view.tab_bar_rect),
-            0,
-            true,
-            false,
-        );
-        app.view.tab_hit_areas = view.tab_hit_areas;
-
-        let backend = TestBackend::new(40, 1);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
-            .unwrap();
-
-        let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
-        assert!(!row.contains("wintermute"), "tab row: {row:?}");
-        assert_eq!(
-            tab_bar_content_area(&app, app.view.tab_bar_rect),
-            app.view.tab_bar_rect
-        );
     }
 
     #[test]

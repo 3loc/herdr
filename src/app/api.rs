@@ -144,6 +144,16 @@ impl App {
             return;
         }
 
+        if let AppEvent::TabBarCommandFinished {
+            generation,
+            segment_index,
+            result,
+        } = ev
+        {
+            self.handle_tab_bar_command_finished(generation, segment_index, result);
+            return;
+        }
+
         if let AppEvent::PluginCommandFinished {
             log_id,
             finished_unix_ms,

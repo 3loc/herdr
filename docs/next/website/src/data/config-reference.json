@@ -723,10 +723,23 @@
           ]
         },
         {
-          "key": "ui.tab_bar_hostname",
-          "type": "boolean",
-          "default": "false",
-          "description": "Show the machine hostname at the right edge of the desktop tab bar."
+          "key": "ui.tab_bar_right",
+          "type": "array",
+          "default": "[{ type = \"zoom\" }]",
+          "description": "Configure ordered right-aligned tab bar entries. Supported types are zoom, hostname, datetime, text, and command.",
+          "values": [
+            "zoom",
+            "hostname",
+            "datetime",
+            "text",
+            "command"
+          ]
+        },
+        {
+          "key": "ui.tab_bar_right_separator",
+          "type": "string",
+          "default": "\" \"",
+          "description": "Text inserted between visible right-aligned tab bar entries."
         },
         {
           "key": "ui.agent_panel_sort",

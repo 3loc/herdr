@@ -332,10 +332,11 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Desktop tab row placement: "top" or "bottom".
 # tab_bar_position = "top"
 
-# Show the machine hostname at the right edge of the desktop tab bar,
-# like tmux's #h in status-right. In herdr --remote sessions this is the
-# remote machine's hostname.
-# tab_bar_hostname = false
+# Ordered status entries at the right edge of the desktop tab bar.
+# Supported types: zoom, hostname, datetime, text, and command.
+# Hostname, datetime, and command entries resolve on the Herdr server.
+# tab_bar_right = [{ type = "zoom" }]
+# tab_bar_right_separator = " "
 
 # Agent panel ordering: "spaces" (grouped by space) or "priority" (attention queue).
 # "workspaces" is accepted as an alias for "spaces".

@@ -263,6 +263,38 @@ pub(crate) fn should_draw_host_cursor_by_default() -> bool {
     true
 }
 
+/// The machine's node name, as shown by tmux's `#h`.
+pub(crate) fn hostname() -> Option<String> {
+    std::env::var("COMPUTERNAME")
+        .ok()
+        .filter(|name| !name.is_empty())
+}
+
+pub(crate) fn local_datetime() -> Option<time::PrimitiveDateTime> {
+    let mut timestamp: libc::time_t = 0;
+    if unsafe { libc::time(&mut timestamp) } == -1 {
+        return None;
+    }
+    let mut local: libc::tm = unsafe { std::mem::zeroed() };
+    if unsafe { libc::localtime_s(&mut local, &timestamp) } != 0 {
+        return None;
+    }
+    let month = time::Month::try_from(u8::try_from(local.tm_mon + 1).ok()?).ok()?;
+    let date = time::Date::from_calendar_date(
+        local.tm_year + 1900,
+        month,
+        u8::try_from(local.tm_mday).ok()?,
+    )
+    .ok()?;
+    let time = time::Time::from_hms(
+        u8::try_from(local.tm_hour).ok()?,
+        u8::try_from(local.tm_min).ok()?,
+        u8::try_from(local.tm_sec).ok()?,
+    )
+    .ok()?;
+    Some(time::PrimitiveDateTime::new(date, time))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WindowsProcessEntry {
     pid: u32,

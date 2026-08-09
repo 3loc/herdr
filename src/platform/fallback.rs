@@ -89,6 +89,15 @@ pub(crate) fn should_draw_host_cursor_by_default() -> bool {
     false
 }
 
+pub(crate) fn hostname() -> Option<String> {
+    None
+}
+
+pub(crate) fn local_datetime() -> Option<time::PrimitiveDateTime> {
+    let now = time::OffsetDateTime::now_utc();
+    Some(time::PrimitiveDateTime::new(now.date(), now.time()))
+}
+
 fn raw_command_argv(command: &str, flag: &str) -> Vec<std::ffi::OsString> {
     vec!["/bin/sh".into(), flag.into(), command.into()]
 }
