@@ -953,8 +953,7 @@ pub fn current_process_is_detached_server_daemon() -> bool {
 }
 
 pub fn foreground_job(child_pid: u32) -> Option<ForegroundJob> {
-    let snapshot = cached_foreground_processes();
-    select_pane_foreground_job_from_snapshot(child_pid, &snapshot)
+    select_pane_foreground_job_cached(child_pid)
 }
 
 pub(crate) fn available_pane_shell(child_pid: u32) -> Option<String> {
@@ -985,8 +984,7 @@ pub fn foreground_group_leader_job(process_group_id: u32) -> Option<ForegroundJo
 }
 
 pub fn foreground_process_group_id(child_pid: u32) -> Option<u32> {
-    let snapshot = cached_foreground_processes();
-    select_pane_foreground_job_from_snapshot(child_pid, &snapshot).map(|job| job.process_group_id)
+    select_pane_foreground_job_cached(child_pid).map(|job| job.process_group_id)
 }
 
 pub fn process_cwd(pid: u32) -> Option<PathBuf> {
@@ -997,25 +995,38 @@ pub fn process_cwd(pid: u32) -> Option<PathBuf> {
         .filter(|path| path.is_absolute())
 }
 
+fn select_pane_foreground_job_cached(shell_pid: u32) -> Option<ForegroundJob> {
+    let snapshot = cached_foreground_processes();
+    let (job, retry_with_fresh_snapshot) =
+        select_pane_foreground_job_from_snapshot(shell_pid, &snapshot)?;
+    if !retry_with_fresh_snapshot {
+        return Some(job);
+    }
+
+    let snapshot = fresh_foreground_processes();
+    select_pane_foreground_job_from_snapshot(shell_pid, &snapshot).map(|(job, _)| job)
+}
+
 fn select_pane_foreground_job_from_snapshot(
     shell_pid: u32,
     snapshot: &ProcessSnapshot,
-) -> Option<ForegroundJob> {
+) -> Option<(ForegroundJob, bool)> {
     if let Some(job) = FOREGROUND_SELECTION_CACHE
         .lock()
         .unwrap_or_else(|err| err.into_inner())
         .get(shell_pid, snapshot)
     {
-        return Some(job);
+        return Some((job, false));
     }
 
     let job = select_pane_foreground_job_from_snapshot_uncached(shell_pid, snapshot)?;
     let cached = prepare_cached_foreground_selection(shell_pid, snapshot, &job);
+    let retry_with_fresh_snapshot = job.process_group_id != shell_pid && cached.is_none();
     FOREGROUND_SELECTION_CACHE
         .lock()
         .unwrap_or_else(|err| err.into_inner())
         .remember(shell_pid, cached);
-    Some(job)
+    Some((job, retry_with_fresh_snapshot))
 }
 
 fn select_pane_foreground_job_from_snapshot_uncached(
@@ -1199,6 +1210,13 @@ fn cached_foreground_processes() -> Arc<ProcessSnapshot> {
         .lock()
         .unwrap_or_else(|err| err.into_inner());
     cache.snapshot(FOREGROUND_PROCESS_SNAPSHOT_CACHE_TTL, snapshot_processes)
+}
+
+fn fresh_foreground_processes() -> Arc<ProcessSnapshot> {
+    let mut cache = FOREGROUND_PROCESS_SNAPSHOT_CACHE
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    cache.snapshot(Duration::ZERO, snapshot_processes)
 }
 
 fn prepare_cached_foreground_selection(
