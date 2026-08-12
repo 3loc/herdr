@@ -163,9 +163,9 @@ class AgentDetectionManifestCheckTests(unittest.TestCase):
             manifest_path.write_text(base)
             check.load_manifest_dir(bundled, engine_version=4)
 
-            for invalid in ("", "A◆", "◆ ◇", "\x7f"):
+            for invalid in ('', 'A◆', '◆ ◇', r'\u007f'):
                 with self.subTest(invalid=invalid):
-                    manifest_path.write_text(base.replace("◐◓◑◒", invalid))
+                    manifest_path.write_text(base.replace('"◐◓◑◒"', f'"{invalid}"'))
                     with self.assertRaises(check.CheckError):
                         check.load_manifest_dir(bundled, engine_version=4)
 

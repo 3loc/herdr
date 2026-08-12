@@ -847,6 +847,9 @@ impl App {
         app.state.pane_id_aliases = pane_id_aliases;
         app.state.workspaces = workspaces;
         app.state.terminals = terminals;
+        for terminal in app.state.terminals.values_mut() {
+            terminal_titles::reconcile_terminal_title_policy(terminal);
+        }
         app.terminal_runtimes = runtimes.into();
         app.state.active = snapshot
             .active
