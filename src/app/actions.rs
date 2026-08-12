@@ -241,6 +241,7 @@ pub struct PaneStateUpdate {
     pub ws_idx: usize,
     pub previous_agent_label: Option<String>,
     pub previous_known_agent: Option<Agent>,
+    pub terminal_title_stripped_changed: bool,
     pub previous_state: AgentState,
     pub previous_seen: bool,
     pub previous_presentation: crate::terminal::EffectivePresentation,
@@ -1046,6 +1047,7 @@ impl AppState {
                     ws_idx,
                     previous_agent_label: change.previous_agent_label.clone(),
                     previous_known_agent: change.previous_known_agent,
+                    terminal_title_stripped_changed: false,
                     previous_state: change.previous_state,
                     previous_seen,
                     previous_presentation: change.previous_presentation.clone(),
@@ -2973,23 +2975,29 @@ impl AppState {
             mutation,
             managed_changed,
             agent_name_changed,
+            terminal_title_stripped_changed,
             unchanged_change,
             managed_launch_pending,
             suppress_acquisition_completion,
         ) = {
             let terminal = self.terminals.get_mut(&terminal_id)?;
             let previous_agent_name = terminal.agent_name.clone();
+            let previous_stripped_title = terminal.terminal_title_stripped();
             let managed_launch_pending = terminal.managed_agent_launch_pending();
             let mutation = update(terminal)?;
             let managed_changed = terminal.reconcile_managed_agent_at(now, false);
             let suppress_acquisition_completion = terminal.finish_agent_process_acquisition();
             let agent_name_changed = terminal.agent_name != previous_agent_name;
-            let unchanged_change = (mutation.agent_released || agent_name_changed)
-                .then(|| terminal.unchanged_effective_state_change_at(now));
+            let terminal_title_stripped_changed =
+                terminal.reconcile_terminal_title_projection(previous_stripped_title);
+            let unchanged_change =
+                (mutation.agent_released || agent_name_changed || terminal_title_stripped_changed)
+                    .then(|| terminal.unchanged_effective_state_change_at(now));
             (
                 mutation,
                 managed_changed,
                 agent_name_changed,
+                terminal_title_stripped_changed,
                 unchanged_change,
                 managed_launch_pending,
                 suppress_acquisition_completion,
@@ -3014,6 +3022,7 @@ impl AppState {
             ws_idx,
             previous_agent_label: change.previous_agent_label.clone(),
             previous_known_agent: change.previous_known_agent,
+            terminal_title_stripped_changed,
             previous_state: change.previous_state,
             previous_seen,
             previous_presentation: change.previous_presentation.clone(),

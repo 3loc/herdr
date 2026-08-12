@@ -16,7 +16,15 @@ DEFAULT_BUNDLED_DIR = PROJECT_ROOT / "src" / "detect" / "manifests"
 DEFAULT_WEBSITE_DIR = PROJECT_ROOT / "website" / "agent-detection"
 ENGINE_SOURCE = PROJECT_ROOT / "src" / "detect" / "manifest_update.rs"
 
-MANIFEST_KEYS = {"id", "version", "min_engine_version", "updated_at", "aliases", "rules"}
+MANIFEST_KEYS = {
+    "id",
+    "version",
+    "min_engine_version",
+    "updated_at",
+    "aliases",
+    "terminal_title_activity_regex",
+    "rules",
+}
 RULE_KEYS = {
     "id",
     "state",
@@ -45,6 +53,8 @@ REGION_RE = re.compile(
 )
 REGION_COUNT_RE = re.compile(r"\(([1-9][0-9]*)\)$")
 VERSION_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)*$")
+RUST_HEX_ESCAPE_RE = re.compile(r"\\x\{([0-9A-Fa-f]{1,6})\}")
+TITLE_ACTIVITY_CLASS_SPECIALS = frozenset("\\[]^-&~")
 MAX_TOP_REGION_LINE_COUNT = 65_535
 MAX_RULES_PER_MANIFEST = 128
 MAX_GATE_DEPTH = 8
@@ -53,10 +63,15 @@ MAX_MATCHERS_PER_GATE = 32
 MAX_TOTAL_MATCHERS = 1024
 MAX_MATCHER_CHARS = 512
 
-# Keep engine-2 clients on the OSC-capable manifest until an engine-3 release
-# can consume top_non_empty_lines. Remove this entry when the website publishes
-# the bundled Grok manifest.
+# Keep published manifests compatible with older engines while a bundled
+# manifest stages a newer engine feature. Remove each entry after the website
+# can publish that bundled version.
 STAGED_WEBSITE_MANIFESTS = {
+    "claude": (
+        "2026.08.12.2",
+        "2026.08.12.1",
+        "03efbec218b6dbde0b8b35ddbb2d495825651935da33cc78ad0c98a44f7aced3",
+    ),
     "grok": (
         "2026.07.16.2",
         "2026.07.16.1",
@@ -143,6 +158,24 @@ def validate_manifest(path: Path, engine_version: int) -> dict:
     if not isinstance(aliases, list) or not all(isinstance(item, str) for item in aliases):
         raise CheckError(f"{path}: aliases must be an array of strings")
 
+    title_activity_regex = manifest.get("terminal_title_activity_regex")
+    if title_activity_regex is not None:
+        if min_engine < 4:
+            raise CheckError(
+                f"{path}: terminal_title_activity_regex requires min_engine_version 4"
+            )
+        if not isinstance(title_activity_regex, str):
+            raise CheckError(f"{path}: terminal_title_activity_regex must be a string")
+        if len(title_activity_regex) > MAX_MATCHER_CHARS:
+            raise CheckError(
+                f"{path}: terminal_title_activity_regex exceeds max length {MAX_MATCHER_CHARS}"
+            )
+        if not title_activity_regex.startswith("^") or not title_activity_regex.endswith("$"):
+            raise CheckError(
+                f"{path}: terminal_title_activity_regex must be anchored with ^ and $"
+            )
+        validate_title_activity_regex(path, title_activity_regex)
+
     rules = manifest.get("rules")
     if not isinstance(rules, list) or not rules:
         raise CheckError(f"{path}: rules must be a non-empty array")
@@ -158,6 +191,54 @@ def validate_manifest(path: Path, engine_version: int) -> dict:
             )
 
     return manifest
+
+
+def validate_title_activity_regex(path: Path, pattern: str) -> None:
+    def rust_scalar(match: re.Match[str]) -> str:
+        value = int(match.group(1), 16)
+        if value > 0x10FFFF or 0xD800 <= value <= 0xDFFF:
+            raise CheckError(
+                f"{path}: terminal_title_activity_regex contains an invalid Unicode scalar"
+            )
+        return chr(value)
+
+    translated = RUST_HEX_ESCAPE_RE.sub(rust_scalar, pattern)
+    if not translated.startswith("^[") or not translated.endswith("]$"):
+        raise CheckError(
+            f"{path}: terminal_title_activity_regex must be a one-scalar character class"
+        )
+
+    body = translated[2:-2]
+    if not body:
+        raise CheckError(f"{path}: terminal_title_activity_regex character class is empty")
+
+    index = 0
+    while index < len(body):
+        start = body[index]
+        if start in TITLE_ACTIVITY_CLASS_SPECIALS or 0xD800 <= ord(start) <= 0xDFFF:
+            raise CheckError(
+                f"{path}: terminal_title_activity_regex uses unsupported character-class syntax"
+            )
+        if index + 1 < len(body) and body[index + 1] == "-":
+            if index + 2 >= len(body):
+                raise CheckError(
+                    f"{path}: terminal_title_activity_regex contains an incomplete range"
+                )
+            end = body[index + 2]
+            if end in TITLE_ACTIVITY_CLASS_SPECIALS or ord(start) > ord(end):
+                raise CheckError(
+                    f"{path}: terminal_title_activity_regex contains an invalid range"
+                )
+            index += 3
+        else:
+            index += 1
+
+    try:
+        re.compile(translated)
+    except re.error as exc:
+        raise CheckError(
+            f"{path}: terminal_title_activity_regex is invalid: {exc}"
+        ) from exc
 
 
 def validate_rule(path: Path, index: int, rule: object, complexity: dict[str, int]) -> None:
@@ -327,7 +408,6 @@ def validate_catalog(
         stages_new_engine_manifest = (
             staged_manifest
             == (bundled_manifest["version"], manifest["version"], website_digest)
-            and bundled_manifest["min_engine_version"] == engine_version
             and manifest["min_engine_version"] < bundled_manifest["min_engine_version"]
         )
         if cmp < 0 and not stages_new_engine_manifest:

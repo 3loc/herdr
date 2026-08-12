@@ -305,11 +305,23 @@ impl App {
             } else {
                 None
             };
+        let manifest_title_snapshot = manifest_update_agents
+            .as_ref()
+            .map(|agents| self.terminal_title_projection_snapshot(Some(agents)));
+        if manifest_update_agents
+            .as_ref()
+            .is_some_and(|agents| !agents.is_empty())
+        {
+            crate::detect::manifest::reload_manifests();
+        }
         let terminal_cwd_reported = matches!(ev, AppEvent::TerminalCwdReported { .. });
         let previous_toast = self.state.toast.clone();
         let pane_updates = self.state.handle_app_event(ev);
         if let Some(agents) = manifest_update_agents {
             self.reset_agent_detection_for_agents(&agents);
+        }
+        if let Some(previous) = manifest_title_snapshot {
+            self.reconcile_terminal_titles_after_manifest_reload(&previous);
         }
         if let Some((pane_id, agent)) = released_agent {
             if pane_updates.iter().any(|update| update.pane_id == pane_id) {
@@ -615,7 +627,7 @@ impl App {
         };
         let workspace_id = self.public_workspace_id(update.ws_idx);
 
-        if update.agent_name_changed {
+        if update.agent_name_changed || update.terminal_title_stripped_changed {
             self.emit_pane_updated(update.ws_idx, update.pane_id);
         }
 
@@ -983,10 +995,12 @@ impl App {
                 }
             }
             Method::ServerReloadAgentManifests(_) => {
+                let previous_titles = self.terminal_title_projection_snapshot(None);
                 let summaries = crate::detect::manifest::reload_manifests();
                 self.state.agent_manifest_summaries = summaries.clone();
                 let update_status = crate::detect::manifest_update::load_status();
                 self.reset_all_agent_detection_runtimes();
+                self.reconcile_terminal_titles_after_manifest_reload(&previous_titles);
                 SuccessResponse {
                     id: request.id,
                     result: ResponseResult::AgentManifestReload {
@@ -1462,6 +1476,113 @@ mod tests {
         )
         .await
         .expect("matching agent detection runtime should be reset");
+    }
+
+    #[tokio::test]
+    async fn manifest_update_event_activates_titles_on_the_app_thread() {
+        const CHILD_ENV: &str = "HERDR_TEST_TITLE_MANIFEST_UPDATE_CHILD";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "app::api::tests::manifest_update_event_activates_titles_on_the_app_thread",
+                    "--nocapture",
+                ])
+                .env(CHILD_ENV, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "isolated manifest update test failed:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let _guard = crate::config::test_config_env_lock().lock().unwrap();
+        let old_config = std::env::var_os("XDG_CONFIG_HOME");
+        let old_state = std::env::var_os("XDG_STATE_HOME");
+        let base =
+            std::env::temp_dir().join(format!("herdr-title-auto-manifest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::env::set_var("XDG_CONFIG_HOME", base.join("config"));
+        std::env::set_var("XDG_STATE_HOME", base.join("state"));
+        crate::detect::manifest::reload_manifests();
+
+        let event_hub = crate::api::EventHub::default();
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            event_hub.clone(),
+        );
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("auto-title")];
+        app.state.ensure_test_terminals();
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        let terminal = app.state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.detected_agent = Some(Agent::Claude);
+        terminal.set_terminal_title(Some("◆ task".into()));
+        let revision = terminal.revision;
+
+        let remote_path = crate::detect::manifest_update::remote_manifest_path(Agent::Claude);
+        std::fs::create_dir_all(remote_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            remote_path,
+            r#"
+id = "claude"
+version = "9999.01.01.1"
+min_engine_version = 4
+updated_at = "9999-01-01T00:00:00Z"
+terminal_title_activity_regex = '^◆$'
+
+[[rules]]
+id = "idle"
+state = "idle"
+contains = ["remote-ready"]
+"#,
+        )
+        .unwrap();
+
+        app.handle_internal_event(AppEvent::AgentDetectionManifestsUpdated {
+            updated: vec![crate::detect::manifest_update::ManifestUpdateCommit {
+                agent: Agent::Claude,
+                version: crate::detect::manifest_update::ManifestVersion::parse("9999.01.01.1")
+                    .unwrap(),
+            }],
+            status: crate::detect::manifest_update::ManifestUpdateStatus::default(),
+        });
+
+        assert!(matches!(
+            crate::detect::manifest::explain(Agent::Claude, "remote-ready").source,
+            Some(crate::detect::manifest::ManifestSource::Remote { .. })
+        ));
+        let terminal = app.state.terminals.get(&terminal_id).unwrap();
+        assert_eq!(terminal.terminal_title.as_deref(), Some("◆ task"));
+        assert_eq!(terminal.terminal_title_stripped().as_deref(), Some("task"));
+        assert_eq!(terminal.revision, revision + 1);
+        assert_eq!(
+            event_hub
+                .events_after(0)
+                .iter()
+                .filter(|(_, event)| event.event == crate::api::schema::EventKind::PaneUpdated)
+                .count(),
+            1
+        );
+
+        match old_config {
+            Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
+        }
+        match old_state {
+            Some(value) => std::env::set_var("XDG_STATE_HOME", value),
+            None => std::env::remove_var("XDG_STATE_HOME"),
+        }
+        crate::detect::manifest::reload_manifests();
+        let _ = std::fs::remove_dir_all(base);
     }
 
     #[tokio::test]

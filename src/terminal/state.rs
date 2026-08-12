@@ -219,7 +219,18 @@ impl TerminalState {
     pub(crate) fn terminal_title_stripped(&self) -> Option<String> {
         self.terminal_title
             .as_deref()
-            .and_then(super::stripped_terminal_title)
+            .and_then(|title| super::stripped_terminal_title(title, self.effective_known_agent()))
+    }
+
+    pub(crate) fn reconcile_terminal_title_projection(
+        &mut self,
+        previous_stripped: Option<String>,
+    ) -> bool {
+        if previous_stripped == self.terminal_title_stripped() {
+            return false;
+        }
+        self.revision = self.revision.wrapping_add(1);
+        true
     }
 
     pub(crate) fn set_terminal_title(&mut self, title: Option<String>) -> TerminalTitleChange {

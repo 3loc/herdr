@@ -29,6 +29,24 @@ contains = ["{contains}"]
     )
 }
 
+fn title_manifest(version: Option<&str>, glyph: char, contains: &str) -> String {
+    let version = version
+        .map(|version| format!("version = \"{version}\"\n"))
+        .unwrap_or_default();
+    format!(
+        r#"
+id = "codex"
+{version}min_engine_version = 4
+terminal_title_activity_regex = '^{glyph}$'
+
+[[rules]]
+id = "test"
+state = "idle"
+contains = ["{contains}"]
+"#
+    )
+}
+
 fn rules_manifest(rules: &str) -> String {
     format!(
         r#"
@@ -170,6 +188,21 @@ fn remote_manifest_loads_between_local_override_and_bundled() {
             explain.cached_remote_version.as_deref(),
             Some("9999.01.01.1")
         );
+    });
+}
+
+#[test]
+fn title_activity_uses_the_active_manifest_source() {
+    with_manifest_dirs("title-active-source", || {
+        write_remote_codex(&title_manifest(Some("9999.01.01.1"), '◆', "remote-ready"));
+        assert!(terminal_title_activity_matches(Agent::Codex, "◆"));
+        assert!(!terminal_title_activity_matches(Agent::Codex, "◇"));
+
+        write_local_codex(&title_manifest(None, '◇', "local-ready"));
+        let explain = explain(Agent::Codex, "local-ready");
+        assert!(matches!(explain.source, Some(ManifestSource::Override(_))));
+        assert!(!terminal_title_activity_matches(Agent::Codex, "◆"));
+        assert!(terminal_title_activity_matches(Agent::Codex, "◇"));
     });
 }
 
@@ -357,6 +390,57 @@ fn devin_manifest_detects_idle_working_and_blocked_states() {
     );
     assert_eq!(permission_prompt.state, AgentState::Blocked);
     assert!(permission_prompt.visible_blocker);
+}
+
+#[test]
+fn manifest_accepts_agent_scoped_terminal_title_activity_regex() {
+    assert!(parse_manifest(
+        r#"
+id = "codex"
+min_engine_version = 4
+terminal_title_activity_regex = '^[◆◇]$'
+
+[[rules]]
+id = "idle"
+state = "idle"
+contains = ["ready"]
+"#
+    )
+    .is_ok());
+
+    for manifest in [
+        r#"
+id = "codex"
+terminal_title_activity_regex = '^◆$'
+
+[[rules]]
+id = "idle"
+state = "idle"
+contains = ["ready"]
+"#,
+        r#"
+id = "codex"
+min_engine_version = 4
+terminal_title_activity_regex = '['
+
+[[rules]]
+id = "idle"
+state = "idle"
+contains = ["ready"]
+"#,
+        r#"
+id = "codex"
+min_engine_version = 4
+terminal_title_activity_regex = '^$'
+
+[[rules]]
+id = "idle"
+state = "idle"
+contains = ["ready"]
+"#,
+    ] {
+        assert!(parse_manifest(manifest).is_err());
+    }
 }
 
 #[test]

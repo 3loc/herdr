@@ -123,6 +123,7 @@ pub struct RuleEvidence {
 #[derive(Debug, Clone)]
 struct LoadedManifest {
     manifest: AgentManifest,
+    terminal_title_activity_regex: Option<Regex>,
     compiled_rules: Vec<CompiledRule>,
     source: ManifestSource,
     warning: Option<String>,
@@ -145,6 +146,7 @@ pub(crate) struct AgentManifest {
     _updated_at: Option<String>,
     #[serde(default)]
     aliases: Vec<String>,
+    terminal_title_activity_regex: Option<String>,
     #[serde(default)]
     rules: Vec<ManifestRule>,
 }
@@ -267,6 +269,7 @@ const MAX_TOTAL_GATES: usize = 512;
 const MAX_MATCHERS_PER_GATE: usize = 32;
 const MAX_TOTAL_MATCHERS: usize = 1024;
 const MAX_MATCHER_CHARS: usize = 512;
+const TERMINAL_TITLE_ACTIVITY_ENGINE_VERSION: u32 = 4;
 
 pub(crate) fn reload_manifests() -> Vec<AgentManifestSummary> {
     let _reload_guard = MANIFEST_RELOAD_LOCK
@@ -354,6 +357,21 @@ pub fn explain_with_input(agent: Agent, input: DetectionInput<'_>) -> DetectionE
         return fallback_explain(Some(agent), None, true);
     };
     evaluate_loaded_manifest(agent, input, loaded, true)
+}
+
+pub(crate) fn terminal_title_activity_matches(agent: Agent, prefix: &str) -> bool {
+    let lock = manifest_cache();
+    let guard = match lock.read() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    guard
+        .manifests
+        .iter()
+        .find(|(cached_agent, _)| *cached_agent == agent)
+        .and_then(|(_, loaded)| loaded.as_ref())
+        .and_then(|loaded| loaded.terminal_title_activity_regex.as_ref())
+        .is_some_and(|regex| regex.is_match(prefix))
 }
 
 pub fn explain_for_label(agent_label: &str, screen_content: &str) -> DetectionExplain {
@@ -670,9 +688,16 @@ fn loaded_manifest(
     cached_remote_version: Option<String>,
     local_override_shadowing_remote: bool,
 ) -> Result<LoadedManifest, String> {
+    let terminal_title_activity_regex = manifest
+        .terminal_title_activity_regex
+        .as_deref()
+        .map(Regex::new)
+        .transpose()
+        .map_err(|err| format!("terminal_title_activity_regex could not be compiled: {err}"))?;
     let compiled_rules = compile_manifest(&manifest)?;
     Ok(LoadedManifest {
         manifest,
+        terminal_title_activity_regex,
         compiled_rules,
         source,
         warning,
@@ -891,6 +916,26 @@ pub(crate) fn parse_remote_manifest_for_agent(
 }
 
 fn validate_manifest(manifest: &AgentManifest) -> Result<(), String> {
+    if let Some(pattern) = manifest.terminal_title_activity_regex.as_deref() {
+        if manifest.min_engine_version.unwrap_or(0) < TERMINAL_TITLE_ACTIVITY_ENGINE_VERSION {
+            return Err(format!(
+                "terminal_title_activity_regex requires min_engine_version {TERMINAL_TITLE_ACTIVITY_ENGINE_VERSION}"
+            ));
+        }
+        if pattern.chars().count() > MAX_MATCHER_CHARS {
+            return Err(format!(
+                "terminal_title_activity_regex exceeds max length {MAX_MATCHER_CHARS}"
+            ));
+        }
+        if !pattern.starts_with('^') || !pattern.ends_with('$') {
+            return Err("terminal_title_activity_regex must be anchored with ^ and $".to_string());
+        }
+        let regex = Regex::new(pattern)
+            .map_err(|err| format!("terminal_title_activity_regex is invalid: {err}"))?;
+        if regex.is_match("") {
+            return Err("terminal_title_activity_regex must not match empty text".to_string());
+        }
+    }
     if manifest.rules.is_empty() {
         return Err("manifest must contain at least one rule".to_string());
     }
