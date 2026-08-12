@@ -29,24 +29,6 @@ contains = ["{contains}"]
     )
 }
 
-fn title_manifest(version: Option<&str>, glyphs: &str, contains: &str) -> String {
-    let version = version
-        .map(|version| format!("version = \"{version}\"\n"))
-        .unwrap_or_default();
-    format!(
-        r#"
-id = "codex"
-{version}min_engine_version = 4
-terminal_title_activity_glyphs = "{glyphs}"
-
-[[rules]]
-id = "test"
-state = "idle"
-contains = ["{contains}"]
-"#
-    )
-}
-
 fn rules_manifest(rules: &str) -> String {
     format!(
         r#"
@@ -188,19 +170,6 @@ fn remote_manifest_loads_between_local_override_and_bundled() {
             explain.cached_remote_version.as_deref(),
             Some("9999.01.01.1")
         );
-    });
-}
-
-#[test]
-fn title_activity_uses_the_active_manifest_source() {
-    with_manifest_dirs("title-active-source", || {
-        write_remote_codex(&title_manifest(Some("9999.01.01.1"), "◆◇", "remote-ready"));
-        assert_eq!(terminal_title_activity_glyphs(Agent::Codex), "◆◇");
-
-        write_local_codex(&title_manifest(None, "◈", "local-ready"));
-        let explain = explain(Agent::Codex, "local-ready");
-        assert!(matches!(explain.source, Some(ManifestSource::Override(_))));
-        assert_eq!(terminal_title_activity_glyphs(Agent::Codex), "◈");
     });
 }
 
@@ -388,28 +357,6 @@ fn devin_manifest_detects_idle_working_and_blocked_states() {
     );
     assert_eq!(permission_prompt.state, AgentState::Blocked);
     assert!(permission_prompt.visible_blocker);
-}
-
-#[test]
-fn manifest_accepts_agent_scoped_terminal_title_activity_glyphs() {
-    assert!(parse_manifest(&title_manifest(None, "◆◇", "ready")).is_ok());
-
-    for glyphs in ["", "A◆", "◆ ◇"] {
-        assert!(parse_manifest(&title_manifest(None, glyphs, "ready")).is_err());
-    }
-
-    assert!(parse_manifest(
-        r#"
-id = "codex"
-terminal_title_activity_glyphs = "◆"
-
-[[rules]]
-id = "idle"
-state = "idle"
-contains = ["ready"]
-"#
-    )
-    .is_err());
 }
 
 #[test]
@@ -676,6 +623,21 @@ fn claude_osc_title_braille_prefix_is_working() {
         Some("osc_title_working")
     );
     assert!(result.visible_working);
+}
+
+#[test]
+fn claude_osc_title_half_circle_frames_are_working() {
+    for frame in ['◐', '◓', '◑', '◒'] {
+        let title = format!("{frame} project");
+        let result = osc_explain(Agent::Claude, "", &title, "");
+        assert_eq!(result.state, AgentState::Working, "frame {frame}");
+        assert_eq!(
+            result.matched_rule.as_ref().map(|rule| rule.id.as_str()),
+            Some("osc_title_working"),
+            "frame {frame}"
+        );
+        assert!(result.visible_working, "frame {frame}");
+    }
 }
 
 #[test]

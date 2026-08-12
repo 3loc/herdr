@@ -16,15 +16,7 @@ DEFAULT_BUNDLED_DIR = PROJECT_ROOT / "src" / "detect" / "manifests"
 DEFAULT_WEBSITE_DIR = PROJECT_ROOT / "website" / "agent-detection"
 ENGINE_SOURCE = PROJECT_ROOT / "src" / "detect" / "manifest_update.rs"
 
-MANIFEST_KEYS = {
-    "id",
-    "version",
-    "min_engine_version",
-    "updated_at",
-    "aliases",
-    "terminal_title_activity_glyphs",
-    "rules",
-}
+MANIFEST_KEYS = {"id", "version", "min_engine_version", "updated_at", "aliases", "rules"}
 RULE_KEYS = {
     "id",
     "state",
@@ -61,15 +53,10 @@ MAX_MATCHERS_PER_GATE = 32
 MAX_TOTAL_MATCHERS = 1024
 MAX_MATCHER_CHARS = 512
 
-# Keep published manifests compatible with older engines while a bundled
-# manifest stages a newer engine feature. Remove each entry after the website
-# can publish that bundled version.
+# Keep engine-2 clients on the OSC-capable manifest until an engine-3 release
+# can consume top_non_empty_lines. Remove this entry when the website publishes
+# the bundled Grok manifest.
 STAGED_WEBSITE_MANIFESTS = {
-    "claude": (
-        "2026.08.12.2",
-        "2026.08.12.1",
-        "03efbec218b6dbde0b8b35ddbb2d495825651935da33cc78ad0c98a44f7aced3",
-    ),
     "grok": (
         "2026.07.16.2",
         "2026.07.16.1",
@@ -155,31 +142,6 @@ def validate_manifest(path: Path, engine_version: int) -> dict:
     aliases = manifest.get("aliases", [])
     if not isinstance(aliases, list) or not all(isinstance(item, str) for item in aliases):
         raise CheckError(f"{path}: aliases must be an array of strings")
-
-    title_activity_glyphs = manifest.get("terminal_title_activity_glyphs")
-    if title_activity_glyphs is not None:
-        if min_engine < 4:
-            raise CheckError(
-                f"{path}: terminal_title_activity_glyphs requires min_engine_version 4"
-            )
-        if not isinstance(title_activity_glyphs, str):
-            raise CheckError(f"{path}: terminal_title_activity_glyphs must be a string")
-        if not title_activity_glyphs:
-            raise CheckError(f"{path}: terminal_title_activity_glyphs must not be empty")
-        if len(title_activity_glyphs) > MAX_MATCHER_CHARS:
-            raise CheckError(
-                f"{path}: terminal_title_activity_glyphs exceeds max length {MAX_MATCHER_CHARS}"
-            )
-        if any(
-            char.isalnum()
-            or char.isspace()
-            or ord(char) < 32
-            or 0x7F <= ord(char) <= 0x9F
-            for char in title_activity_glyphs
-        ):
-            raise CheckError(
-                f"{path}: terminal_title_activity_glyphs must contain only non-text glyphs"
-            )
 
     rules = manifest.get("rules")
     if not isinstance(rules, list) or not rules:
@@ -365,6 +327,7 @@ def validate_catalog(
         stages_new_engine_manifest = (
             staged_manifest
             == (bundled_manifest["version"], manifest["version"], website_digest)
+            and bundled_manifest["min_engine_version"] == engine_version
             and manifest["min_engine_version"] < bundled_manifest["min_engine_version"]
         )
         if cmp < 0 and not stages_new_engine_manifest:

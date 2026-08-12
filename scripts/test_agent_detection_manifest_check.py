@@ -151,24 +151,6 @@ class AgentDetectionManifestCheckTests(unittest.TestCase):
             with self.assertRaisesRegex(check.CheckError, "exceeds engine"):
                 check.load_manifest_dir(bundled, engine_version=1)
 
-    def test_validates_title_activity_glyphs(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            bundled = Path(tmp) / "bundled"
-            bundled.mkdir()
-            base = manifest("codex", "2026.06.10.1").replace(
-                "min_engine_version = 1",
-                'min_engine_version = 4\nterminal_title_activity_glyphs = "◐◓◑◒"',
-            )
-            manifest_path = bundled / "codex.toml"
-            manifest_path.write_text(base)
-            check.load_manifest_dir(bundled, engine_version=4)
-
-            for invalid in ('', 'A◆', '◆ ◇', r'\u007f'):
-                with self.subTest(invalid=invalid):
-                    manifest_path.write_text(base.replace('"◐◓◑◒"', f'"{invalid}"'))
-                    with self.assertRaises(check.CheckError):
-                        check.load_manifest_dir(bundled, engine_version=4)
-
     def test_rejects_top_non_empty_lines_below_engine_three(self):
         with tempfile.TemporaryDirectory() as tmp:
             bundled = Path(tmp) / "bundled"

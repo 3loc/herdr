@@ -700,9 +700,6 @@ impl App {
         };
 
         state.terminals = restored_terminals;
-        for terminal in state.terminals.values_mut() {
-            terminal_titles::reconcile_terminal_title_policy(terminal);
-        }
 
         for ws_idx in 0..state.workspaces.len() {
             let cwd = state.workspaces[ws_idx]
@@ -847,9 +844,6 @@ impl App {
         app.state.pane_id_aliases = pane_id_aliases;
         app.state.workspaces = workspaces;
         app.state.terminals = terminals;
-        for terminal in app.state.terminals.values_mut() {
-            terminal_titles::reconcile_terminal_title_policy(terminal);
-        }
         app.terminal_runtimes = runtimes.into();
         app.state.active = snapshot
             .active

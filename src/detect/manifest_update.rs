@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{agent_label, parse_agent_label, Agent};
 
-pub(crate) const MANIFEST_ENGINE_VERSION: u32 = 4;
+pub(crate) const MANIFEST_ENGINE_VERSION: u32 = 3;
 const DEFAULT_CATALOG_URL: &str = "https://herdr.dev/agent-detection/index.toml";
 const CATALOG_URL_ENV: &str = "HERDR_AGENT_DETECTION_MANIFEST_CATALOG_URL";
 const MAX_FETCH_BYTES: usize = 256 * 1024;
@@ -169,6 +169,9 @@ pub(crate) fn auto_update(events: tokio::sync::mpsc::Sender<crate::events::AppEv
     let result = check_and_update();
     let status = match result {
         Ok(output) => {
+            if !output.updated.is_empty() {
+                super::manifest::reload_manifests();
+            }
             let _ = events.blocking_send(crate::events::AppEvent::AgentDetectionManifestsUpdated {
                 updated: output.updated,
                 status: output.status,
@@ -665,7 +668,6 @@ path = "codex.toml"
             else {
                 panic!("unexpected event");
             };
-            crate::detect::manifest::reload_manifests();
             assert_eq!(updated.len(), 1);
             assert_eq!(updated[0].agent, Agent::Codex);
 

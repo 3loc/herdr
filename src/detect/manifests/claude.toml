@@ -1,9 +1,8 @@
 id = "claude"
 version = "2026.08.12.2"
-min_engine_version = 4
+min_engine_version = 2
 updated_at = "2026-08-12T00:00:00Z"
 aliases = ["claude-code"]
-terminal_title_activity_glyphs = "·✢✳✶✻✽◐◓◑◒"
 
 [[rules]]
 id = "osc_title_working"

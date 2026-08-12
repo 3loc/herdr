@@ -145,7 +145,6 @@ pub(crate) struct AgentManifest {
     _updated_at: Option<String>,
     #[serde(default)]
     aliases: Vec<String>,
-    terminal_title_activity_glyphs: Option<String>,
     #[serde(default)]
     rules: Vec<ManifestRule>,
 }
@@ -268,7 +267,6 @@ const MAX_TOTAL_GATES: usize = 512;
 const MAX_MATCHERS_PER_GATE: usize = 32;
 const MAX_TOTAL_MATCHERS: usize = 1024;
 const MAX_MATCHER_CHARS: usize = 512;
-const TERMINAL_TITLE_ACTIVITY_ENGINE_VERSION: u32 = 4;
 
 pub(crate) fn reload_manifests() -> Vec<AgentManifestSummary> {
     let _reload_guard = MANIFEST_RELOAD_LOCK
@@ -356,21 +354,6 @@ pub fn explain_with_input(agent: Agent, input: DetectionInput<'_>) -> DetectionE
         return fallback_explain(Some(agent), None, true);
     };
     evaluate_loaded_manifest(agent, input, loaded, true)
-}
-
-pub(crate) fn terminal_title_activity_glyphs(agent: Agent) -> String {
-    let lock = manifest_cache();
-    let guard = match lock.read() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    guard
-        .manifests
-        .iter()
-        .find(|(cached_agent, _)| *cached_agent == agent)
-        .and_then(|(_, loaded)| loaded.as_ref())
-        .and_then(|loaded| loaded.manifest.terminal_title_activity_glyphs.clone())
-        .unwrap_or_default()
 }
 
 pub fn explain_for_label(agent_label: &str, screen_content: &str) -> DetectionExplain {
@@ -908,29 +891,6 @@ pub(crate) fn parse_remote_manifest_for_agent(
 }
 
 fn validate_manifest(manifest: &AgentManifest) -> Result<(), String> {
-    if let Some(glyphs) = manifest.terminal_title_activity_glyphs.as_deref() {
-        if manifest.min_engine_version.unwrap_or(0) < TERMINAL_TITLE_ACTIVITY_ENGINE_VERSION {
-            return Err(format!(
-                "terminal_title_activity_glyphs requires min_engine_version {TERMINAL_TITLE_ACTIVITY_ENGINE_VERSION}"
-            ));
-        }
-        if glyphs.is_empty() {
-            return Err("terminal_title_activity_glyphs must not be empty".to_string());
-        }
-        if glyphs.chars().count() > MAX_MATCHER_CHARS {
-            return Err(format!(
-                "terminal_title_activity_glyphs exceeds max length {MAX_MATCHER_CHARS}"
-            ));
-        }
-        if glyphs
-            .chars()
-            .any(|glyph| glyph.is_alphanumeric() || glyph.is_whitespace() || glyph.is_control())
-        {
-            return Err(
-                "terminal_title_activity_glyphs must contain only non-text glyphs".to_string(),
-            );
-        }
-    }
     if manifest.rules.is_empty() {
         return Err("manifest must contain at least one rule".to_string());
     }

@@ -129,7 +129,6 @@ pub struct TerminalState {
     pub metadata_tokens: crate::metadata_tokens::MetadataTokens,
     pub persisted_agent_session: Option<crate::agent_resume::PersistedAgentSession>,
     pub terminal_title: Option<String>,
-    terminal_title_activity_glyphs: String,
     pub manual_label: Option<String>,
     pub agent_name: Option<String>,
     agent_name_owner: Option<AgentNameOwner>,
@@ -164,7 +163,6 @@ impl TerminalState {
             metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
             persisted_agent_session: None,
             terminal_title: None,
-            terminal_title_activity_glyphs: String::new(),
             manual_label: None,
             agent_name: None,
             agent_name_owner: None,
@@ -219,19 +217,9 @@ impl TerminalState {
     }
 
     pub(crate) fn terminal_title_stripped(&self) -> Option<String> {
-        self.terminal_title.as_deref().and_then(|title| {
-            super::stripped_terminal_title(title, &self.terminal_title_activity_glyphs)
-        })
-    }
-
-    pub(crate) fn reconcile_terminal_title_projection(&mut self, activity_glyphs: String) -> bool {
-        let previous_stripped = self.terminal_title_stripped();
-        self.terminal_title_activity_glyphs = activity_glyphs;
-        if previous_stripped == self.terminal_title_stripped() {
-            return false;
-        }
-        self.revision = self.revision.wrapping_add(1);
-        true
+        self.terminal_title
+            .as_deref()
+            .and_then(super::stripped_terminal_title)
     }
 
     pub(crate) fn set_terminal_title(&mut self, title: Option<String>) -> TerminalTitleChange {
@@ -2053,7 +2041,7 @@ impl TerminalState {
         self.managed_agent = None;
     }
 
-    pub fn clear_agent_runtime_identity_after_respawn(&mut self) -> bool {
+    pub fn clear_agent_runtime_identity_after_respawn(&mut self) {
         self.detected_agent = None;
         self.fallback_state = AgentState::Unknown;
         self.fallback_visible_blocker = false;
@@ -2071,10 +2059,7 @@ impl TerminalState {
         self.recent_agent_process_exit = None;
         self.agent_process_acquisition_pending = false;
         self.pending_agent_resume_plan = None;
-        let terminal_title_stripped_changed =
-            self.reconcile_terminal_title_projection(String::new());
         self.clear_agent_name();
-        terminal_title_stripped_changed
     }
 
     pub fn is_agent_terminal(&self) -> bool {
@@ -5612,11 +5597,8 @@ mod tests {
         });
         terminal.set_detected_state(Some(Agent::Codex), AgentState::Idle);
         terminal.set_detected_agent_process_at(Agent::Codex, Instant::now());
-        terminal.reconcile_terminal_title_projection("◆".into());
-        terminal.set_terminal_title(Some("◆ task".into()));
-        let revision = terminal.revision;
 
-        assert!(terminal.clear_agent_runtime_identity_after_respawn());
+        terminal.clear_agent_runtime_identity_after_respawn();
 
         assert_eq!(terminal.state, AgentState::Unknown);
         assert!(terminal.detected_agent.is_none());
@@ -5624,12 +5606,6 @@ mod tests {
         assert!(terminal.persisted_agent_session.is_none());
         assert!(!terminal.respawn_shell_on_exit);
         assert!(!terminal.finish_agent_process_acquisition());
-        assert!(terminal.terminal_title_activity_glyphs.is_empty());
-        assert_eq!(
-            terminal.terminal_title_stripped().as_deref(),
-            Some("◆ task")
-        );
-        assert_eq!(terminal.revision, revision + 1);
     }
 
     #[test]
