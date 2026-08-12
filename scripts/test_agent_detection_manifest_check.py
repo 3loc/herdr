@@ -151,31 +151,22 @@ class AgentDetectionManifestCheckTests(unittest.TestCase):
             with self.assertRaisesRegex(check.CheckError, "exceeds engine"):
                 check.load_manifest_dir(bundled, engine_version=1)
 
-    def test_validates_title_activity_regex_syntax_and_empty_matches(self):
+    def test_validates_title_activity_glyphs(self):
         with tempfile.TemporaryDirectory() as tmp:
             bundled = Path(tmp) / "bundled"
             bundled.mkdir()
             base = manifest("codex", "2026.06.10.1").replace(
                 "min_engine_version = 1",
-                "min_engine_version = 4\nterminal_title_activity_regex = '^[\\x{25D0}-\\x{25D3}]$'",
+                'min_engine_version = 4\nterminal_title_activity_glyphs = "◐◓◑◒"',
             )
             manifest_path = bundled / "codex.toml"
             manifest_path.write_text(base)
             check.load_manifest_dir(bundled, engine_version=4)
 
-            for invalid, error in [
-                ("^[a$", "one-scalar character class"),
-                ("^a*$", "one-scalar character class"),
-                ("^(?=x)x$", "one-scalar character class"),
-                ("^[\\x{D800}]$", "invalid Unicode scalar"),
-                ("^[\\x{110000}]$", "invalid Unicode scalar"),
-                ("^[z-a]$", "invalid range"),
-            ]:
+            for invalid in ("", "A◆", "◆ ◇", "\x7f"):
                 with self.subTest(invalid=invalid):
-                    manifest_path.write_text(
-                        base.replace("^[\\x{25D0}-\\x{25D3}]$", invalid)
-                    )
-                    with self.assertRaisesRegex(check.CheckError, error):
+                    manifest_path.write_text(base.replace("◐◓◑◒", invalid))
+                    with self.assertRaises(check.CheckError):
                         check.load_manifest_dir(bundled, engine_version=4)
 
     def test_rejects_top_non_empty_lines_below_engine_three(self):

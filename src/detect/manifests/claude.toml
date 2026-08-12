@@ -3,7 +3,7 @@ version = "2026.08.12.2"
 min_engine_version = 4
 updated_at = "2026-08-12T00:00:00Z"
 aliases = ["claude-code"]
-terminal_title_activity_regex = '^[·✢✳✶✻✽\x{25D0}-\x{25D3}]$'
+terminal_title_activity_glyphs = "·✢✳✶✻✽◐◓◑◒"
 
 [[rules]]
 id = "osc_title_working"

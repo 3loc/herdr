@@ -22,7 +22,7 @@ MANIFEST_KEYS = {
     "min_engine_version",
     "updated_at",
     "aliases",
-    "terminal_title_activity_regex",
+    "terminal_title_activity_glyphs",
     "rules",
 }
 RULE_KEYS = {
@@ -53,8 +53,6 @@ REGION_RE = re.compile(
 )
 REGION_COUNT_RE = re.compile(r"\(([1-9][0-9]*)\)$")
 VERSION_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)*$")
-RUST_HEX_ESCAPE_RE = re.compile(r"\\x\{([0-9A-Fa-f]{1,6})\}")
-TITLE_ACTIVITY_CLASS_SPECIALS = frozenset("\\[]^-&~")
 MAX_TOP_REGION_LINE_COUNT = 65_535
 MAX_RULES_PER_MANIFEST = 128
 MAX_GATE_DEPTH = 8
@@ -158,23 +156,30 @@ def validate_manifest(path: Path, engine_version: int) -> dict:
     if not isinstance(aliases, list) or not all(isinstance(item, str) for item in aliases):
         raise CheckError(f"{path}: aliases must be an array of strings")
 
-    title_activity_regex = manifest.get("terminal_title_activity_regex")
-    if title_activity_regex is not None:
+    title_activity_glyphs = manifest.get("terminal_title_activity_glyphs")
+    if title_activity_glyphs is not None:
         if min_engine < 4:
             raise CheckError(
-                f"{path}: terminal_title_activity_regex requires min_engine_version 4"
+                f"{path}: terminal_title_activity_glyphs requires min_engine_version 4"
             )
-        if not isinstance(title_activity_regex, str):
-            raise CheckError(f"{path}: terminal_title_activity_regex must be a string")
-        if len(title_activity_regex) > MAX_MATCHER_CHARS:
+        if not isinstance(title_activity_glyphs, str):
+            raise CheckError(f"{path}: terminal_title_activity_glyphs must be a string")
+        if not title_activity_glyphs:
+            raise CheckError(f"{path}: terminal_title_activity_glyphs must not be empty")
+        if len(title_activity_glyphs) > MAX_MATCHER_CHARS:
             raise CheckError(
-                f"{path}: terminal_title_activity_regex exceeds max length {MAX_MATCHER_CHARS}"
+                f"{path}: terminal_title_activity_glyphs exceeds max length {MAX_MATCHER_CHARS}"
             )
-        if not title_activity_regex.startswith("^") or not title_activity_regex.endswith("$"):
+        if any(
+            char.isalnum()
+            or char.isspace()
+            or ord(char) < 32
+            or 0x7F <= ord(char) <= 0x9F
+            for char in title_activity_glyphs
+        ):
             raise CheckError(
-                f"{path}: terminal_title_activity_regex must be anchored with ^ and $"
+                f"{path}: terminal_title_activity_glyphs must contain only non-text glyphs"
             )
-        validate_title_activity_regex(path, title_activity_regex)
 
     rules = manifest.get("rules")
     if not isinstance(rules, list) or not rules:
@@ -191,54 +196,6 @@ def validate_manifest(path: Path, engine_version: int) -> dict:
             )
 
     return manifest
-
-
-def validate_title_activity_regex(path: Path, pattern: str) -> None:
-    def rust_scalar(match: re.Match[str]) -> str:
-        value = int(match.group(1), 16)
-        if value > 0x10FFFF or 0xD800 <= value <= 0xDFFF:
-            raise CheckError(
-                f"{path}: terminal_title_activity_regex contains an invalid Unicode scalar"
-            )
-        return chr(value)
-
-    translated = RUST_HEX_ESCAPE_RE.sub(rust_scalar, pattern)
-    if not translated.startswith("^[") or not translated.endswith("]$"):
-        raise CheckError(
-            f"{path}: terminal_title_activity_regex must be a one-scalar character class"
-        )
-
-    body = translated[2:-2]
-    if not body:
-        raise CheckError(f"{path}: terminal_title_activity_regex character class is empty")
-
-    index = 0
-    while index < len(body):
-        start = body[index]
-        if start in TITLE_ACTIVITY_CLASS_SPECIALS or 0xD800 <= ord(start) <= 0xDFFF:
-            raise CheckError(
-                f"{path}: terminal_title_activity_regex uses unsupported character-class syntax"
-            )
-        if index + 1 < len(body) and body[index + 1] == "-":
-            if index + 2 >= len(body):
-                raise CheckError(
-                    f"{path}: terminal_title_activity_regex contains an incomplete range"
-                )
-            end = body[index + 2]
-            if end in TITLE_ACTIVITY_CLASS_SPECIALS or ord(start) > ord(end):
-                raise CheckError(
-                    f"{path}: terminal_title_activity_regex contains an invalid range"
-                )
-            index += 3
-        else:
-            index += 1
-
-    try:
-        re.compile(translated)
-    except re.error as exc:
-        raise CheckError(
-            f"{path}: terminal_title_activity_regex is invalid: {exc}"
-        ) from exc
 
 
 def validate_rule(path: Path, index: int, rule: object, complexity: dict[str, int]) -> None:

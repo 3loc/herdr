@@ -305,23 +305,20 @@ impl App {
             } else {
                 None
             };
-        let manifest_title_snapshot = manifest_update_agents
+        let manifests_changed = manifest_update_agents
             .as_ref()
-            .map(|agents| self.terminal_title_projection_snapshot(Some(agents)));
-        if manifest_update_agents
-            .as_ref()
-            .is_some_and(|agents| !agents.is_empty())
-        {
+            .is_some_and(|agents| !agents.is_empty());
+        if manifests_changed {
             crate::detect::manifest::reload_manifests();
         }
         let terminal_cwd_reported = matches!(ev, AppEvent::TerminalCwdReported { .. });
         let previous_toast = self.state.toast.clone();
         let pane_updates = self.state.handle_app_event(ev);
-        if let Some(agents) = manifest_update_agents {
-            self.reset_agent_detection_for_agents(&agents);
+        if let Some(agents) = manifest_update_agents.as_ref() {
+            self.reset_agent_detection_for_agents(agents);
         }
-        if let Some(previous) = manifest_title_snapshot {
-            self.reconcile_terminal_titles_after_manifest_reload(&previous);
+        if manifests_changed {
+            self.reconcile_terminal_titles_after_manifest_reload();
         }
         if let Some((pane_id, agent)) = released_agent {
             if pane_updates.iter().any(|update| update.pane_id == pane_id) {
@@ -613,8 +610,11 @@ impl App {
         };
 
         self.terminal_runtimes.insert(terminal_id.clone(), runtime);
-        if let Some(terminal) = self.state.terminals.get_mut(&terminal_id) {
-            terminal.clear_agent_runtime_identity_after_respawn();
+        let title_changed = self.state.terminals.get_mut(&terminal_id).is_some_and(
+            crate::terminal::TerminalState::clear_agent_runtime_identity_after_respawn,
+        );
+        if title_changed {
+            self.emit_pane_updated(ws_idx, pane_id);
         }
         self.state.focus_pane_in_workspace(ws_idx, pane_id);
         self.schedule_session_save();
@@ -995,12 +995,11 @@ impl App {
                 }
             }
             Method::ServerReloadAgentManifests(_) => {
-                let previous_titles = self.terminal_title_projection_snapshot(None);
                 let summaries = crate::detect::manifest::reload_manifests();
                 self.state.agent_manifest_summaries = summaries.clone();
                 let update_status = crate::detect::manifest_update::load_status();
                 self.reset_all_agent_detection_runtimes();
-                self.reconcile_terminal_titles_after_manifest_reload(&previous_titles);
+                self.reconcile_terminal_titles_after_manifest_reload();
                 SuccessResponse {
                     id: request.id,
                     result: ResponseResult::AgentManifestReload {
@@ -1479,13 +1478,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn manifest_update_event_activates_titles_on_the_app_thread() {
+    async fn manifest_update_event_reconciles_all_active_title_policies() {
         const CHILD_ENV: &str = "HERDR_TEST_TITLE_MANIFEST_UPDATE_CHILD";
         if std::env::var_os(CHILD_ENV).is_none() {
             let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
-                    "app::api::tests::manifest_update_event_activates_titles_on_the_app_thread",
+                    "app::api::tests::manifest_update_event_reconciles_all_active_title_policies",
                     "--nocapture",
                 ])
                 .env(CHILD_ENV, "1")
@@ -1537,7 +1536,7 @@ id = "claude"
 version = "9999.01.01.1"
 min_engine_version = 4
 updated_at = "9999-01-01T00:00:00Z"
-terminal_title_activity_regex = '^◆$'
+terminal_title_activity_glyphs = "◆"
 
 [[rules]]
 id = "idle"
@@ -1549,7 +1548,7 @@ contains = ["remote-ready"]
 
         app.handle_internal_event(AppEvent::AgentDetectionManifestsUpdated {
             updated: vec![crate::detect::manifest_update::ManifestUpdateCommit {
-                agent: Agent::Claude,
+                agent: Agent::Codex,
                 version: crate::detect::manifest_update::ManifestVersion::parse("9999.01.01.1")
                     .unwrap(),
             }],

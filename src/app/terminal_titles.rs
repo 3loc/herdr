@@ -3,6 +3,16 @@ use std::collections::HashSet;
 use super::App;
 use crate::layout::PaneId;
 
+pub(crate) fn reconcile_terminal_title_policy(
+    terminal: &mut crate::terminal::TerminalState,
+) -> bool {
+    let activity_glyphs = terminal
+        .effective_known_agent()
+        .map(crate::detect::manifest::terminal_title_activity_glyphs)
+        .unwrap_or_default();
+    terminal.reconcile_terminal_title_projection(activity_glyphs)
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct TerminalTitleChanges {
     pub(crate) raw_changed: bool,
@@ -33,35 +43,13 @@ impl App {
         changes
     }
 
-    pub(crate) fn terminal_title_projection_snapshot(
-        &self,
-        agents: Option<&[crate::detect::Agent]>,
-    ) -> std::collections::HashMap<crate::terminal::TerminalId, Option<String>> {
-        self.state
-            .terminals
-            .iter()
-            .filter_map(|(terminal_id, terminal)| {
-                let included = agents.is_none_or(|agents| {
-                    terminal
-                        .effective_known_agent()
-                        .is_some_and(|agent| agents.contains(&agent))
-                });
-                included.then(|| (terminal_id.clone(), terminal.terminal_title_stripped()))
-            })
-            .collect()
-    }
-
     pub(crate) fn reconcile_terminal_titles_after_manifest_reload(
         &mut self,
-        previous: &std::collections::HashMap<crate::terminal::TerminalId, Option<String>>,
     ) -> TerminalTitleChanges {
         let mut changes = TerminalTitleChanges::default();
         let mut changed_terminals = HashSet::new();
         for (terminal_id, terminal) in &mut self.state.terminals {
-            let Some(previous_stripped) = previous.get(terminal_id) else {
-                continue;
-            };
-            if terminal.reconcile_terminal_title_projection(previous_stripped.clone()) {
+            if reconcile_terminal_title_policy(terminal) {
                 changes.stripped_changed = true;
                 changed_terminals.insert(terminal_id.clone());
             }
@@ -158,6 +146,9 @@ mod tests {
         let terminal = app.state.terminals.get_mut(&terminal_id).unwrap();
         terminal.detected_agent = Some(Agent::Claude);
         terminal.state = AgentState::Working;
+        terminal.reconcile_terminal_title_projection(
+            crate::detect::manifest::terminal_title_activity_glyphs(Agent::Claude),
+        );
         let runtime = crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"");
         runtime.test_process_pty_bytes("\x1b]0;◐ 修复🙂标题\x07".as_bytes());
         app.terminal_runtimes.insert(terminal_id.clone(), runtime);
@@ -309,7 +300,7 @@ mod tests {
             r#"
 id = "claude"
 min_engine_version = 4
-terminal_title_activity_regex = '^◆$'
+terminal_title_activity_glyphs = "◆"
 
 [[rules]]
 id = "idle"

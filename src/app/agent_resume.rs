@@ -256,8 +256,13 @@ impl App {
                     err = %err,
                     "failed to start shell for deferred agent resume"
                 );
-                if let Some(terminal) = self.state.terminals.get_mut(&terminal_id) {
-                    terminal.clear_agent_runtime_identity_after_respawn();
+                let title_changed = self.state.terminals.get_mut(&terminal_id).is_some_and(
+                    crate::terminal::TerminalState::clear_agent_runtime_identity_after_respawn,
+                );
+                if title_changed {
+                    if let Some((ws_idx, _)) = self.find_pane(pane_id) {
+                        self.emit_pane_updated(ws_idx, pane_id);
+                    }
                 }
                 return false;
             }

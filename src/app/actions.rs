@@ -2982,14 +2982,15 @@ impl AppState {
         ) = {
             let terminal = self.terminals.get_mut(&terminal_id)?;
             let previous_agent_name = terminal.agent_name.clone();
-            let previous_stripped_title = terminal.terminal_title_stripped();
+            let previous_known_agent = terminal.effective_known_agent();
             let managed_launch_pending = terminal.managed_agent_launch_pending();
             let mutation = update(terminal)?;
             let managed_changed = terminal.reconcile_managed_agent_at(now, false);
             let suppress_acquisition_completion = terminal.finish_agent_process_acquisition();
             let agent_name_changed = terminal.agent_name != previous_agent_name;
-            let terminal_title_stripped_changed =
-                terminal.reconcile_terminal_title_projection(previous_stripped_title);
+            let known_agent = terminal.effective_known_agent();
+            let terminal_title_stripped_changed = previous_known_agent != known_agent
+                && super::terminal_titles::reconcile_terminal_title_policy(terminal);
             let unchanged_change =
                 (mutation.agent_released || agent_name_changed || terminal_title_stripped_changed)
                     .then(|| terminal.unchanged_effective_state_change_at(now));

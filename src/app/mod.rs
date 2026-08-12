@@ -700,6 +700,9 @@ impl App {
         };
 
         state.terminals = restored_terminals;
+        for terminal in state.terminals.values_mut() {
+            terminal_titles::reconcile_terminal_title_policy(terminal);
+        }
 
         for ws_idx in 0..state.workspaces.len() {
             let cwd = state.workspaces[ws_idx]
