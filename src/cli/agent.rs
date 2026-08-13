@@ -7,6 +7,7 @@ use crate::api::schema::{
 };
 
 const AGENT_START_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const PANE_SHELL_READINESS_RETRY_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub(super) fn run_agent_command(args: &[String]) -> std::io::Result<i32> {
     let Some(subcommand) = args.first().map(|arg| arg.as_str()) else {
@@ -340,31 +341,20 @@ fn agent_start(args: &[String]) -> std::io::Result<i32> {
     let timeout = Duration::from_millis(timeout_ms.unwrap_or(30_000));
     let retryable_timeout = timeout > crate::app::AGENT_START_SETTLE_DELAY
         && timeout <= crate::app::MAX_AGENT_START_TIMEOUT;
-    let deadline = retryable_timeout.then(|| Instant::now() + timeout);
     let pinned_terminal_id = pane_terminal_id(&pane_id)?;
-    let mut retrying = false;
+    let mut retry_deadline = None;
     let mut previous_busy_response = None;
-    let (mut response, successful_timeout_ms) = loop {
-        if retrying
-            && (pane_terminal_id(&pane_id)? != pinned_terminal_id
-                || !pane_shell_is_initializing(&pane_id)?)
-        {
-            if let Some(previous_busy_response) = previous_busy_response.as_ref() {
+    let mut response = loop {
+        if let Some(previous_busy_response) = previous_busy_response.as_ref() {
+            let retry_expired = retry_deadline.is_some_and(|deadline| Instant::now() >= deadline);
+            if retry_expired
+                || pane_terminal_id(&pane_id)? != pinned_terminal_id
+                || !pane_shell_is_initializing(&pane_id)?
+            {
                 return super::print_response(previous_busy_response);
             }
         }
-        let request_timeout_ms = if let Some(deadline) = deadline {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining <= crate::app::AGENT_START_SETTLE_DELAY {
-                if !remaining.is_zero() {
-                    std::thread::sleep(remaining);
-                }
-                return super::print_response(&agent_wait_timeout());
-            }
-            Some(duration_millis_ceil(remaining))
-        } else {
-            timeout_ms
-        };
+
         let response = super::send_request(&Request {
             id: "cli:agent:start".into(),
             method: Method::AgentStart(AgentStartParams {
@@ -372,11 +362,11 @@ fn agent_start(args: &[String]) -> std::io::Result<i32> {
                 kind: kind.clone(),
                 pane_id: pane_id.clone(),
                 args: agent_args.clone(),
-                timeout_ms: request_timeout_ms,
+                timeout_ms,
             }),
         })?;
         if response.get("error").is_none() {
-            break (response, request_timeout_ms);
+            break response;
         }
         if response["error"]["code"].as_str() != Some("agent_pane_busy")
             || !retryable_timeout
@@ -387,16 +377,16 @@ fn agent_start(args: &[String]) -> std::io::Result<i32> {
             return super::print_response(&response);
         }
 
+        let deadline = *retry_deadline
+            .get_or_insert_with(|| Instant::now() + PANE_SHELL_READINESS_RETRY_TIMEOUT);
         previous_busy_response = Some(response);
-        let Some(deadline) = deadline else {
-            return super::print_response(&agent_wait_timeout());
-        };
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            return super::print_response(&agent_wait_timeout());
+            if let Some(previous_busy_response) = previous_busy_response.as_ref() {
+                return super::print_response(previous_busy_response);
+            }
         }
         std::thread::sleep(AGENT_START_POLL_INTERVAL.min(remaining));
-        retrying = true;
     };
 
     let Some(expected_terminal_id) = response["result"]["agent"]["terminal_id"].as_str() else {
@@ -412,20 +402,10 @@ fn agent_start(args: &[String]) -> std::io::Result<i32> {
     {
         return super::print_response(&agent_name_lost_error("cli:agent:start", name));
     }
-    let (Some(deadline), Some(successful_timeout_ms)) = (deadline, successful_timeout_ms) else {
-        return super::print_response(&cli_agent_error(
-            "cli:agent:start",
-            "invalid_agent_timeout",
-            crate::app::INVALID_AGENT_TIMEOUT_MESSAGE,
-        ));
-    };
-    let server_cleanup_deadline =
-        Instant::now() + Duration::from_millis(successful_timeout_ms) + AGENT_START_POLL_INTERVAL;
     let waited = wait_for_named_agent(
         name,
         &pane_id,
-        deadline,
-        server_cleanup_deadline,
+        timeout,
         &expected_kind,
         expected_terminal_id,
     );
@@ -568,27 +548,16 @@ fn agent_wait(args: &[String]) -> std::io::Result<i32> {
 fn wait_for_named_agent(
     name: &str,
     fallback_pane_id: &str,
-    deadline: Instant,
-    server_cleanup_deadline: Instant,
+    timeout: Duration,
     expected_kind: &str,
     expected_terminal_id: &str,
 ) -> std::io::Result<Result<serde_json::Value, serde_json::Value>> {
+    let deadline = Instant::now().checked_add(timeout);
     let mut first_poll = true;
     loop {
-        if Instant::now() >= deadline {
-            // The server starts its forwarded timeout after receiving the
-            // request. Poll through that bounded skew so the pending name is
-            // immediately reusable when the CLI returns.
-            while Instant::now() < server_cleanup_deadline {
-                let response = resolve_agent_target_unchecked(name, "cli:agent:start:timeout")?;
-                if response["result"]["agent"]["launch_pending"].as_bool() != Some(true) {
-                    break;
-                }
-                std::thread::sleep(
-                    AGENT_START_POLL_INTERVAL
-                        .min(server_cleanup_deadline.saturating_duration_since(Instant::now())),
-                );
-            }
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            // Let the server reconcile its matching startup deadline before
+            // returning so the pending name is immediately reusable.
             let _ = resolve_agent_target_unchecked(name, "cli:agent:start:timeout");
             return Ok(Err(agent_wait_timeout()));
         }
@@ -646,10 +615,6 @@ fn wait_for_named_agent(
         }
         std::thread::sleep(AGENT_START_POLL_INTERVAL);
     }
-}
-
-fn duration_millis_ceil(duration: Duration) -> u64 {
-    duration.as_millis() as u64 + u64::from(!duration.subsec_nanos().is_multiple_of(1_000_000))
 }
 
 fn pane_terminal_id(pane_id: &str) -> std::io::Result<Option<String>> {
