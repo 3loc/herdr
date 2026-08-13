@@ -16,7 +16,7 @@ cat >"$hook_input_file" 2>/dev/null || true
 [ -n "${HERDR_PANE_ID:-}" ] || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
 
-HERDR_HOOK_INPUT_FILE="$hook_input_file" python3 - <<'PY'
+HERDR_HOOK_INPUT_FILE="$hook_input_file" python3 - <<'PY' >/dev/null 2>&1 || true
 import json
 import os
 import random

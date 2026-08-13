@@ -1,4 +1,5 @@
 use super::harness::*;
+use std::os::unix::fs::PermissionsExt;
 
 fn run_claude_hook(action: &str, hook_input: &str) -> Option<serde_json::Value> {
     run_shell_hook(
@@ -107,6 +108,98 @@ fn run_shell_hook_with_env(
     let request = server.join().unwrap();
     cleanup_test_base(&base);
     request.map(|line| serde_json::from_str(&line).unwrap())
+}
+
+#[test]
+fn shell_hooks_ignore_unusable_python_on_path() {
+    let base = unique_test_dir();
+    fs::create_dir_all(&base).unwrap();
+    let python_path = base.join("python3");
+    fs::write(
+        &python_path,
+        r#"#!/bin/sh
+printf invoked >"$PYTHON_INVOKED"
+printf 'error: tool python3 not found on stdout\n'
+printf 'error: tool python3 not found on stderr\n' >&2
+exit 1
+"#,
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&python_path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&python_path, permissions).unwrap();
+
+    let hooks: &[(&str, &[&str])] = &[
+        (
+            "src/integration/assets/claude/herdr-agent-state.sh",
+            &["session"],
+        ),
+        (
+            "src/integration/assets/codex/herdr-agent-state.sh",
+            &["session"],
+        ),
+        ("src/integration/assets/copilot/herdr-agent-state.sh", &[]),
+        (
+            "src/integration/assets/devin/herdr-agent-state.sh",
+            &["session"],
+        ),
+        (
+            "src/integration/assets/droid/herdr-agent-state.sh",
+            &["session"],
+        ),
+        (
+            "src/integration/assets/grok/herdr-agent-state.sh",
+            &["session"],
+        ),
+        (
+            "src/integration/assets/mastracode/herdr-agent-state.sh",
+            &["session"],
+        ),
+    ];
+
+    let invoked_path = base.join("python-invoked");
+    for (asset_path, args) in hooks {
+        let _ = fs::remove_file(&invoked_path);
+        let hook_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(asset_path);
+        let mut child = Command::new("sh")
+            .arg(hook_path)
+            .args(*args)
+            .env("PATH", format!("{}:/usr/bin:/bin", base.display()))
+            .env("PYTHON_INVOKED", &invoked_path)
+            .env("HERDR_ENV", "1")
+            .env("HERDR_SOCKET_PATH", base.join("missing.sock"))
+            .env("HERDR_PANE_ID", "p_test")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(b"{}").unwrap();
+        let output = child.wait_with_output().unwrap();
+
+        assert!(
+            invoked_path.exists(),
+            "{asset_path} did not attempt to invoke python"
+        );
+        assert!(
+            output.status.success(),
+            "{asset_path} exposed unusable python: status={:?} stderr={}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            output.stdout.is_empty(),
+            "{asset_path} exposed unusable python stdout: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert!(
+            output.stderr.is_empty(),
+            "{asset_path} exposed unusable python stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    cleanup_test_base(&base);
 }
 
 #[test]

@@ -125,7 +125,7 @@ const DEVIN_HOOK_ASSET: &str = if cfg!(windows) {
 } else {
     include_str!("assets/devin/herdr-agent-state.sh")
 };
-const DEVIN_INTEGRATION_VERSION: u32 = 2;
+const DEVIN_INTEGRATION_VERSION: u32 = 3;
 const DEVIN_HOOK_EVENTS: [(&str, &str); 6] = [
     ("SessionStart", "session"),
     ("UserPromptSubmit", "session"),
@@ -265,7 +265,7 @@ const MASTRACODE_HOOK_ASSET: &str = if cfg!(windows) {
 } else {
     include_str!("assets/mastracode/herdr-agent-state.sh")
 };
-const MASTRACODE_INTEGRATION_VERSION: u32 = 2;
+const MASTRACODE_INTEGRATION_VERSION: u32 = 3;
 const MASTRACODE_HOOK_TIMEOUT_MS: u64 = 10_000;
 const MASTRACODE_REMOVED_HOOK_EVENTS: [(&str, &str); 2] =
     [("SessionStart", "idle"), ("SessionEnd", "release")];
@@ -293,7 +293,7 @@ const GROK_HOOK_ASSET: &str = if cfg!(windows) {
 } else {
     include_str!("assets/grok/herdr-agent-state.sh")
 };
-const GROK_INTEGRATION_VERSION: u32 = 1;
+const GROK_INTEGRATION_VERSION: u32 = 2;
 
 pub(crate) const INSTALL_WARNING_PREFIX: &str = "warning:";
 
