@@ -419,7 +419,8 @@ fn agent_start(args: &[String]) -> std::io::Result<i32> {
             crate::app::INVALID_AGENT_TIMEOUT_MESSAGE,
         ));
     };
-    let server_cleanup_deadline = Instant::now() + Duration::from_millis(successful_timeout_ms);
+    let server_cleanup_deadline =
+        Instant::now() + Duration::from_millis(successful_timeout_ms) + AGENT_START_POLL_INTERVAL;
     let waited = wait_for_named_agent(
         name,
         &pane_id,
