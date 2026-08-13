@@ -487,6 +487,23 @@ fn agent_start_timeout_releases_the_name_for_reuse() {
         .unwrap()
         .to_string();
 
+    assert!(run_cli(
+        &socket_path,
+        &[
+            "pane",
+            "report-agent",
+            &reuse_pane_id,
+            "--source",
+            "custom:reuse",
+            "--agent",
+            "pi",
+            "--state",
+            "idle",
+        ],
+    )
+    .status
+    .success());
+
     let started = run_cli(
         &socket_path,
         &[
@@ -505,22 +522,6 @@ fn agent_start_timeout_releases_the_name_for_reuse() {
     let error: serde_json::Value = serde_json::from_slice(&started.stderr).unwrap();
     assert_eq!(error["error"]["code"], "timeout");
 
-    assert!(run_cli(
-        &socket_path,
-        &[
-            "pane",
-            "report-agent",
-            &reuse_pane_id,
-            "--source",
-            "custom:reuse",
-            "--agent",
-            "pi",
-            "--state",
-            "idle",
-        ],
-    )
-    .status
-    .success());
     let reused = run_cli(&socket_path, &["agent", "rename", &reuse_pane_id, "worker"]);
     assert!(
         reused.status.success(),
