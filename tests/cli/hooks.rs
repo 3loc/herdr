@@ -1,4 +1,5 @@
 use super::harness::*;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 fn run_claude_hook(action: &str, hook_input: &str) -> Option<serde_json::Value> {
@@ -110,6 +111,7 @@ fn run_shell_hook_with_env(
     request.map(|line| serde_json::from_str(&line).unwrap())
 }
 
+#[cfg(unix)]
 #[test]
 fn shell_hooks_ignore_unusable_python_on_path() {
     let base = unique_test_dir();
