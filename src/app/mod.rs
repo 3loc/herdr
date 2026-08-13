@@ -8,6 +8,9 @@ pub(crate) mod actions;
 mod agent_resume;
 pub(crate) mod agent_view;
 mod agents;
+pub(crate) use agents::{
+    AGENT_START_SETTLE_DELAY, INVALID_AGENT_TIMEOUT_MESSAGE, MAX_AGENT_START_TIMEOUT,
+};
 mod api;
 mod api_helpers;
 pub(crate) use api_helpers::limit_snapshot_lines;

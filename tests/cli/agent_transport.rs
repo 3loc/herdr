@@ -124,7 +124,7 @@ fn agent_start_does_not_retry_after_the_target_terminal_changes() {
     let listener = UnixListener::bind(&socket_path).unwrap();
 
     let server = thread::spawn(move || {
-        for terminal_id in ["term_1", "term_1"] {
+        for _ in 0..2 {
             let (mut stream, line) = accept_fake_cli_operation(&listener);
             let request: serde_json::Value = serde_json::from_str(&line).unwrap();
             assert_eq!(request["method"], "pane.get");
@@ -135,54 +135,52 @@ fn agent_start_does_not_retry_after_the_target_terminal_changes() {
                     "id": request["id"],
                     "result": {
                         "type": "pane_info",
-                        "pane": { "terminal_id": terminal_id }
+                        "pane": { "terminal_id": "term_1" }
                     }
                 })
             )
             .unwrap();
             stream.flush().unwrap();
 
-            if terminal_id == "term_1" {
-                let (mut stream, line) = accept_fake_cli_operation(&listener);
-                let request: serde_json::Value = serde_json::from_str(&line).unwrap();
-                if request["method"] == "agent.start" {
-                    writeln!(
-                        stream,
-                        "{}",
-                        serde_json::json!({
-                            "id": request["id"],
-                            "error": {
-                                "code": "agent_pane_busy",
-                                "message": "agent target pane w1:p1 is not an available shell"
+            let (mut stream, line) = accept_fake_cli_operation(&listener);
+            let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if request["method"] == "agent.start" {
+                writeln!(
+                    stream,
+                    "{}",
+                    serde_json::json!({
+                        "id": request["id"],
+                        "error": {
+                            "code": "agent_pane_busy",
+                            "message": "agent target pane w1:p1 is not an available shell"
+                        }
+                    })
+                )
+                .unwrap();
+                stream.flush().unwrap();
+            } else {
+                assert_eq!(request["method"], "pane.process_info");
+                writeln!(
+                    stream,
+                    "{}",
+                    serde_json::json!({
+                        "id": request["id"],
+                        "result": {
+                            "type": "pane_process_info",
+                            "process_info": {
+                                "pane_id": "w1:p1",
+                                "shell_pid": 10,
+                                "foreground_process_group_id": 10,
+                                "foreground_processes": [
+                                    { "pid": 10, "name": "bash" },
+                                    { "pid": 11, "name": "startup-helper" }
+                                ]
                             }
-                        })
-                    )
-                    .unwrap();
-                    stream.flush().unwrap();
-                } else {
-                    assert_eq!(request["method"], "pane.process_info");
-                    writeln!(
-                        stream,
-                        "{}",
-                        serde_json::json!({
-                            "id": request["id"],
-                            "result": {
-                                "type": "pane_process_info",
-                                "process_info": {
-                                    "pane_id": "w1:p1",
-                                    "shell_pid": 10,
-                                    "foreground_process_group_id": 10,
-                                    "foreground_processes": [
-                                        { "pid": 10, "name": "bash" },
-                                        { "pid": 11, "name": "startup-helper" }
-                                    ]
-                                }
-                            }
-                        })
-                    )
-                    .unwrap();
-                    stream.flush().unwrap();
-                }
+                        }
+                    })
+                )
+                .unwrap();
+                stream.flush().unwrap();
             }
         }
 

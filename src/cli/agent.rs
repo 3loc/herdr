@@ -7,8 +7,6 @@ use crate::api::schema::{
 };
 
 const AGENT_START_POLL_INTERVAL: Duration = Duration::from_millis(100);
-const AGENT_START_SETTLE_DELAY: Duration = Duration::from_secs(3);
-const MAX_AGENT_START_TIMEOUT: Duration = Duration::from_secs(300);
 
 pub(super) fn run_agent_command(args: &[String]) -> std::io::Result<i32> {
     let Some(subcommand) = args.first().map(|arg| arg.as_str()) else {
@@ -340,8 +338,8 @@ fn agent_start(args: &[String]) -> std::io::Result<i32> {
         Vec::new()
     };
     let timeout = Duration::from_millis(timeout_ms.unwrap_or(30_000));
-    let retryable_timeout =
-        timeout > AGENT_START_SETTLE_DELAY && timeout <= MAX_AGENT_START_TIMEOUT;
+    let retryable_timeout = timeout > crate::app::AGENT_START_SETTLE_DELAY
+        && timeout <= crate::app::MAX_AGENT_START_TIMEOUT;
     let deadline = retryable_timeout.then(|| Instant::now() + timeout);
     let pinned_terminal_id = pane_terminal_id(&pane_id)?;
     let mut retrying = false;
@@ -358,7 +356,7 @@ fn agent_start(args: &[String]) -> std::io::Result<i32> {
         }
         let request_timeout_ms = if let Some(deadline) = deadline {
             let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining <= AGENT_START_SETTLE_DELAY {
+            if remaining <= crate::app::AGENT_START_SETTLE_DELAY {
                 if !remaining.is_zero() {
                     std::thread::sleep(remaining);
                 }
@@ -419,7 +417,7 @@ fn agent_start(args: &[String]) -> std::io::Result<i32> {
         return super::print_response(&cli_agent_error(
             "cli:agent:start",
             "invalid_agent_timeout",
-            "agent start timeout must be greater than 3000ms and at most 300000ms",
+            crate::app::INVALID_AGENT_TIMEOUT_MESSAGE,
         ));
     };
     let waited = wait_for_named_agent(
@@ -691,6 +689,8 @@ fn process_info_shows_shell_initialization(process_info: &serde_json::Value) -> 
         })
 }
 
+// Windows exposes no foreground process group, so shell initialization is not
+// observable and a busy `agent.start` is not retried there.
 #[cfg(not(unix))]
 fn process_info_shows_shell_initialization(_process_info: &serde_json::Value) -> bool {
     false

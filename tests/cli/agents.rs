@@ -157,7 +157,6 @@ fn agent_start_shell_readiness_timeout_does_not_submit_input_or_reserve_the_name
     assert!(started_at.elapsed() >= Duration::from_secs(3));
     assert!(!invocations.exists());
 
-    thread::sleep(Duration::from_millis(350));
     let retried = run_cli_json(
         &socket_path,
         &[
