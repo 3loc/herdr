@@ -22,6 +22,7 @@
 
 ### Fixed
 - Qwen Code panes now use locale-independent terminal-title states and localized confirmation fallbacks, preventing active or blocked turns from appearing idle. (#2756)
+- Closing a terminal running `herdr --remote` no longer produces a local client core dump while the remote session stays alive. (#2424)
 - Active Space and Agent rows now use dedicated theme colors that remain visible when the host terminal background matches the selected Herdr theme. (#2792)
 - `agent prompt` now rejects agents already waiting at approval or question dialogs with `agent_blocked`, without sending text or Enter. (#2788)
 - `prefix+e` now preserves logical lines when opening soft-wrapped scrollback in an editor. (#2733)
