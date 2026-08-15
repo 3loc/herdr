@@ -702,6 +702,26 @@ fn is_remote_client_process() -> bool {
     std::env::var(crate::remote::REMOTE_KEYBINDINGS_ENV_VAR).is_ok()
 }
 
+fn requested_environment_update() -> Option<Vec<(String, Option<String>)>> {
+    if is_remote_client_process() {
+        return None;
+    }
+    let config = crate::config::Config::load().config;
+    let mut update = config
+        .session
+        .update_environment
+        .into_iter()
+        .filter(|name| crate::config::session_environment_name_allowed(name))
+        .map(|name| {
+            let value = std::env::var_os(&name).and_then(|value| value.into_string().ok());
+            (name, value)
+        })
+        .collect::<Vec<_>>();
+    update.sort_by(|left, right| left.0.cmp(&right.0));
+    update.dedup_by(|left, right| left.0 == right.0);
+    Some(update)
+}
+
 /// Time to wait for the server's Welcome reply during the handshake.
 ///
 /// A local client talks to an already-connected server, so 5s is plenty. The
@@ -850,6 +870,7 @@ fn do_handshake(
             cell_width_px,
             cell_height_px,
         ),
+        environment_update: requested_environment_update(),
     };
     protocol::write_message(stream, &hello)
         .map_err(|e| ClientError::ConnectionFailed(io::Error::other(e.to_string())))?;
@@ -2742,11 +2763,12 @@ mod tests {
     }
 
     #[test]
-    fn remote_client_uses_extended_handshake_timeout() {
+    fn remote_client_uses_extended_handshake_timeout_without_forwarding_environment() {
         let _guard = env_lock().lock().unwrap();
         let _remote = EnvVarGuard::set(crate::remote::REMOTE_KEYBINDINGS_ENV_VAR, "local");
 
         assert_eq!(handshake_read_timeout(), REMOTE_HANDSHAKE_READ_TIMEOUT);
+        assert!(requested_environment_update().is_none());
     }
 
     #[test]

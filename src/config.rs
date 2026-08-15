@@ -38,6 +38,7 @@ pub use self::{
 };
 
 pub(crate) use self::keybinds::parse_key_combo;
+pub(crate) use self::model::session_environment_name_allowed;
 pub(crate) use self::{
     io::upsert_top_level_bool,
     tab_bar::{
