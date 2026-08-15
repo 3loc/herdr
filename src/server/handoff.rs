@@ -501,14 +501,18 @@ mod tests {
             None,
             None,
             Some("deploying".to_string()),
-            vec![("WAYLAND_DISPLAY".to_string(), Some("wayland-1".to_string()))],
+            vec![
+                ("WAYLAND_DISPLAY".to_string(), Some("wayland-1".to_string())),
+                ("SSH_AUTH_SOCK".to_string(), None),
+            ],
         );
+        let restored: HandoffManifest = serde_json::from_value(
+            serde_json::to_value(&manifest).expect("manifest should serialize"),
+        )
+        .expect("manifest should deserialize");
 
-        assert_eq!(manifest.api_window_title.as_deref(), Some("deploying"));
-        assert_eq!(
-            manifest.session_environment,
-            vec![("WAYLAND_DISPLAY".to_string(), Some("wayland-1".to_string()))]
-        );
+        assert_eq!(restored.api_window_title.as_deref(), Some("deploying"));
+        assert_eq!(restored.session_environment, manifest.session_environment);
     }
 
     #[test]

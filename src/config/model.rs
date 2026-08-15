@@ -1370,6 +1370,7 @@ update_environment = ["DISPLAY", "NIRI_SOCKET"]
             config.session.update_environment,
             vec!["DISPLAY", "NIRI_SOCKET"]
         );
+        assert!(config.collect_diagnostics().is_empty());
     }
 
     #[test]
@@ -1380,6 +1381,12 @@ update_environment = ["DISPLAY", "NIRI_SOCKET"]
         assert!(!session_environment_name_allowed("HERDR_SOCKET_PATH"));
         assert!(!session_environment_name_allowed("herdr_custom"));
         assert!(!session_environment_name_allowed("CODEX_THREAD_ID"));
+
+        let config: Config = toml::from_str(
+            "[session]\nupdate_environment = [\"WAYLAND_DISPLAY\", \"TERM\", \"HERDR_FOO\"]\n",
+        )
+        .unwrap();
+        assert_eq!(config.collect_diagnostics().len(), 2);
     }
 
     #[test]

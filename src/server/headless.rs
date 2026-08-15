@@ -6122,9 +6122,13 @@ mod tests {
             keybindings: None,
             direct_attach_requested: false,
             direct_graphics: true,
-            environment_update: None,
+            environment_update: Some(vec![("WAYLAND_DISPLAY".into(), Some("wayland-1".into()),)]),
             writer: writer_a,
         }));
+        assert_eq!(
+            server.app.session_environment,
+            vec![("WAYLAND_DISPLAY".into(), Some("wayland-1".into()))]
+        );
         assert!(server.clients[&1].direct_graphics);
         assert!(server.clients[&1].pixel_mouse);
         assert!(server.direct_graphics_available());
