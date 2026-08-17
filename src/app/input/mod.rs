@@ -567,6 +567,15 @@ impl App {
         source_id: super::InputSourceId,
         mouse: MouseEvent,
     ) -> bool {
+        self.handle_modified_url_click_with(source_id, mouse, crate::platform::open_url)
+    }
+
+    fn handle_modified_url_click_with(
+        &mut self,
+        source_id: super::InputSourceId,
+        mouse: MouseEvent,
+        open_url: impl FnOnce(&str) -> std::io::Result<Option<std::process::Child>>,
+    ) -> bool {
         if self.state.mode != Mode::Terminal
             || !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
             || !mouse.modifiers.contains(modified_url_click_modifier())
@@ -595,7 +604,7 @@ impl App {
                 tracing::warn!(err = %err, url = %url, "failed to invoke plugin link handler");
             }
         }
-        match crate::platform::open_url(&url) {
+        match open_url(&url) {
             Ok(Some(child)) => self.detached_process_children.push(child),
             Ok(None) => {}
             Err(err) => {

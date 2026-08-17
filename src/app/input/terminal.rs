@@ -890,52 +890,43 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn ctrl_click_url_reaps_failed_opener() {
-        use std::os::unix::fs::PermissionsExt;
-
         let opener_dir = unique_temp_path("url-opener");
         let record_path = opener_dir.join("record");
         let opener_path = opener_dir.join("xdg-open");
         std::fs::create_dir_all(&opener_dir).expect("fake opener directory");
         std::fs::write(
             &opener_path,
-            "#!/bin/sh\nprintf '%s\\n%s\\n' \"$$\" \"$1\" > \"$HERDR_TEST_URL_OPENER_RECORD\"\nexit 3\n",
+            "#!/bin/sh\nprintf '%s\\n%s\\n' \"$$\" \"$1\" > \"$2\"\nexit 3\n",
         )
         .expect("fake opener script");
-        let mut permissions = std::fs::metadata(&opener_path)
-            .expect("fake opener metadata")
-            .permissions();
-        permissions.set_mode(0o700);
-        std::fs::set_permissions(&opener_path, permissions).expect("executable fake opener");
-
-        let old_path = std::env::var_os("PATH");
-        let old_record = std::env::var_os("HERDR_TEST_URL_OPENER_RECORD");
-        unsafe {
-            std::env::set_var("PATH", &opener_dir);
-            std::env::set_var("HERDR_TEST_URL_OPENER_RECORD", &record_path);
-        }
 
         let url = "https://example.com/akbash-2903";
         let line = format!("see {url}");
         let (mut app, info) = app_with_screen_bytes(line.as_bytes());
         let col = info.inner_rect.x + line.find("example").expect("url host") as u16;
-        app.handle_mouse(modified_mouse(
-            MouseEventKind::Down(MouseButton::Left),
-            col,
-            info.inner_rect.y,
-            KeyModifiers::CONTROL,
-        ));
+        let handled = app.handle_modified_url_click_with(
+            41,
+            modified_mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                col,
+                info.inner_rect.y,
+                KeyModifiers::CONTROL,
+            ),
+            |clicked_url| {
+                std::process::Command::new("/bin/sh")
+                    .arg(&opener_path)
+                    .arg(clicked_url)
+                    .arg(&record_path)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                    .map(Some)
+            },
+        );
+        assert!(handled);
 
         let record = wait_for_file(&record_path);
-        unsafe {
-            match old_path {
-                Some(path) => std::env::set_var("PATH", path),
-                None => std::env::remove_var("PATH"),
-            }
-            match old_record {
-                Some(path) => std::env::set_var("HERDR_TEST_URL_OPENER_RECORD", path),
-                None => std::env::remove_var("HERDR_TEST_URL_OPENER_RECORD"),
-            }
-        }
         let mut lines = record.lines();
         let pid = lines
             .next()
