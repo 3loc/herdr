@@ -16,15 +16,13 @@ APP_SERVER_SOURCES = (
     *sorted((PROJECT_ROOT / "src" / "server").rglob("*.rs")),
 )
 TEST_MODULE = re.compile(r"(?m)^#\[cfg\(test\)\]\s*\nmod\s+\w+\s*\{")
+INPUT_STATE_CALL = re.compile(r"(?:\.|::)input_state\b")
+KEYBOARD_STATE_ANSI_CALL = re.compile(
+    r"(?:\.|::)(?:keyboard_state_ansi|kitty_keyboard_state_ansi)\b"
+)
 AGGREGATE_STATE_CALLS = (
-    (
-        re.compile(r"(?:\.|::)input_state\b"),
-        "aggregate terminal input state; add a narrow accessor",
-    ),
-    (
-        re.compile(r"(?:\.|::)(?:keyboard_state_ansi|kitty_keyboard_state_ansi)\b"),
-        "formatted keyboard state",
-    ),
+    (INPUT_STATE_CALL, "aggregate terminal input state; add a narrow accessor"),
+    (KEYBOARD_STATE_ANSI_CALL, "formatted keyboard state"),
 )
 FORBIDDEN_CALLS = (
     *AGGREGATE_STATE_CALLS,
@@ -195,6 +193,16 @@ mod tests {
 fn render() { TerminalRuntime::input_state; }
 '''
         self.assertRegex(production_code(source), FORBIDDEN_CALLS[0][0])
+
+    def test_scanner_catches_each_aggregate_state_call(self) -> None:
+        cases = (
+            ("fn render() { runtime.input_state(); }", INPUT_STATE_CALL),
+            ("fn render() { runtime.keyboard_state_ansi(); }", KEYBOARD_STATE_ANSI_CALL),
+            ("fn render() { runtime.kitty_keyboard_state_ansi(); }", KEYBOARD_STATE_ANSI_CALL),
+        )
+        for source, pattern in cases:
+            with self.subTest(source=source):
+                self.assertRegex(production_code(source), pattern)
 
     def test_scanner_catches_imported_process_query(self) -> None:
         source = "fn render() { foreground_job(pid); }"

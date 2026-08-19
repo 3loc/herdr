@@ -9813,8 +9813,9 @@ next_tab = ""
 
         let hidden_pane = server.app.state.workspaces[0].tabs[0].root_pane;
         server.sync_immediate_pty_sources();
-        assert!(server.app.render_dirty.request_pty(hidden_pane));
         assert!(server.app.render_dirty.request_pty(background_pane));
+        assert!(server.has_pending_presentation_work(false, false));
+        assert!(server.app.render_dirty.request_pty(hidden_pane));
     }
 
     #[tokio::test]
