@@ -58,7 +58,10 @@ Inside pane-scaled render and layout loops:
 
 Prefer deterministic operation or architecture tests to wall-clock CI limits.
 Performance benchmarks are supporting evidence, not substitutes for behavioral
-coverage.
+coverage. Before a stable release, `just bench-release-smoke` must compare the
+candidate with the current stable binary under hidden and visible output; use
+the longer release matrix only when the smoke test moves materially or when
+validating performance work.
 
 ### Runtime/client boundary guardrail
 
