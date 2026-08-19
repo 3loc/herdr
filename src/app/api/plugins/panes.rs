@@ -242,10 +242,7 @@ impl App {
         context: &PluginInvocationContext,
     ) -> Result<Vec<(String, String)>, (String, String)> {
         let mut env = super::super::env::normalize_launch_env(env)?;
-        #[cfg(unix)]
-        set_default_plugin_pane_pwd(&mut env, cwd);
-        #[cfg(not(unix))]
-        let _ = cwd;
+        crate::platform::set_default_plugin_pane_pwd(&mut env, cwd);
         let context_json = serde_json::to_string(&context)
             .map_err(|err| ("invalid_plugin_context".to_string(), err.to_string()))?;
         super::env::ensure_plugin_user_dirs(plugin)
@@ -346,13 +343,6 @@ impl App {
     }
 }
 
-#[cfg(unix)]
-fn set_default_plugin_pane_pwd(env: &mut Vec<(String, String)>, cwd: &std::path::Path) {
-    if !env.iter().any(|(key, _)| key == "PWD") {
-        env.push(("PWD".to_string(), cwd.display().to_string()));
-    }
-}
-
 fn plugin_pane_protected_env_key(key: &str) -> bool {
     matches!(
         key,
@@ -366,21 +356,4 @@ fn plugin_pane_protected_env_key(key: &str) -> bool {
             | "HERDR_PLUGIN_CONTEXT_JSON"
             | "HERDR_BIN_PATH"
     )
-}
-
-#[cfg(all(test, unix))]
-mod tests {
-    use super::set_default_plugin_pane_pwd;
-
-    #[test]
-    fn plugin_pane_pwd_defaults_to_cwd_without_overriding_explicit_env() {
-        let cwd = std::path::Path::new("/plugin-cwd");
-        let mut derived = vec![("OTHER".to_string(), "value".to_string())];
-        set_default_plugin_pane_pwd(&mut derived, cwd);
-        assert!(derived.contains(&("PWD".to_string(), "/plugin-cwd".to_string())));
-
-        let mut explicit = vec![("PWD".to_string(), "/caller-pwd".to_string())];
-        set_default_plugin_pane_pwd(&mut explicit, cwd);
-        assert_eq!(explicit, [("PWD".to_string(), "/caller-pwd".to_string())]);
-    }
 }
