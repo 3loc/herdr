@@ -16,17 +16,17 @@ impl App {
         pane: PluginManifestPane,
     ) -> String {
         let context = self.current_plugin_context("plugin-pane");
+        let cwd = self.plugin_pane_cwd(plugin, params.cwd);
         let extra_env =
-            match self.plugin_pane_launch_env(plugin, &pane.id, params.env.clone(), &context) {
+            match self.plugin_pane_launch_env(plugin, &pane.id, &cwd, params.env, &context) {
                 Ok(env) => env,
                 Err((code, message)) => return encode_error(id, &code, message),
             };
-        let cwd = Some(self.plugin_pane_cwd(plugin, params.cwd));
         let width = params.width.or(pane.width);
         let height = params.height.or(pane.height);
         if let Err(err) = self.spawn_popup_argv_command(
             &pane.command,
-            cwd,
+            Some(cwd),
             extra_env,
             crate::app::popup::PopupGeometry { width, height },
         ) {
@@ -49,17 +49,21 @@ impl App {
         pane: PluginManifestPane,
     ) -> String {
         let context = self.current_plugin_context("plugin-pane");
+        let cwd = self.plugin_pane_cwd(plugin, params.cwd);
         let extra_env =
-            match self.plugin_pane_launch_env(plugin, &pane.id, params.env.clone(), &context) {
+            match self.plugin_pane_launch_env(plugin, &pane.id, &cwd, params.env, &context) {
                 Ok(env) => env,
                 Err((code, message)) => return encode_error(id, &code, message),
             };
-        let cwd = Some(self.plugin_pane_cwd(plugin, params.cwd));
-        let (ws_idx, new_pane) =
-            match self.spawn_overlay_argv_command(&pane.command, cwd, extra_env, Vec::new()) {
-                Ok(result) => result,
-                Err(err) => return encode_error(id, "plugin_pane_open_failed", err.to_string()),
-            };
+        let (ws_idx, new_pane) = match self.spawn_overlay_argv_command(
+            &pane.command,
+            Some(cwd),
+            extra_env,
+            Vec::new(),
+        ) {
+            Ok(result) => result,
+            Err(err) => return encode_error(id, "plugin_pane_open_failed", err.to_string()),
+        };
         let layout_tab_idx = self
             .overlay_panes
             .get(&new_pane.pane_id)
@@ -98,8 +102,9 @@ impl App {
             );
         };
         let context = self.plugin_context_for_pane(ws_idx, target_pane, "plugin-pane");
+        let cwd = self.plugin_pane_cwd(plugin, params.cwd);
         let extra_env =
-            match self.plugin_pane_launch_env(plugin, &pane.id, params.env.clone(), &context) {
+            match self.plugin_pane_launch_env(plugin, &pane.id, &cwd, params.env, &context) {
                 Ok(env) => env,
                 Err((code, message)) => return encode_error(id, &code, message),
             };
@@ -110,7 +115,6 @@ impl App {
             crate::api::schema::SplitDirection::Right => Direction::Horizontal,
             crate::api::schema::SplitDirection::Down => Direction::Vertical,
         };
-        let cwd = Some(self.plugin_pane_cwd(plugin, params.cwd));
         let (rows, cols) = self.state.estimate_pane_size();
         let previous_focus = self.state.current_pane_focus_target();
         let Some(ws) = self.state.workspaces.get_mut(ws_idx) else {
@@ -121,7 +125,7 @@ impl App {
             direction,
             rows.max(4),
             cols.max(10),
-            cwd,
+            Some(cwd),
             &pane.command,
             extra_env,
             self.state.pane_scrollback_limit_bytes,
@@ -187,7 +191,7 @@ impl App {
         let cwd = self.plugin_pane_cwd(plugin, params.cwd);
         let context = self.plugin_context_for_workspace(ws_idx, "plugin-pane");
         let extra_env =
-            match self.plugin_pane_launch_env(plugin, &pane.id, params.env.clone(), &context) {
+            match self.plugin_pane_launch_env(plugin, &pane.id, &cwd, params.env, &context) {
                 Ok(env) => env,
                 Err((code, message)) => return encode_error(id, &code, message),
             };
@@ -233,10 +237,15 @@ impl App {
         &self,
         plugin: &InstalledPluginInfo,
         entrypoint: &str,
+        cwd: &std::path::Path,
         env: std::collections::HashMap<String, String>,
         context: &PluginInvocationContext,
     ) -> Result<Vec<(String, String)>, (String, String)> {
         let mut env = super::super::env::normalize_launch_env(env)?;
+        #[cfg(unix)]
+        set_default_plugin_pane_pwd(&mut env, cwd);
+        #[cfg(not(unix))]
+        let _ = cwd;
         let context_json = serde_json::to_string(&context)
             .map_err(|err| ("invalid_plugin_context".to_string(), err.to_string()))?;
         super::env::ensure_plugin_user_dirs(plugin)
@@ -337,6 +346,13 @@ impl App {
     }
 }
 
+#[cfg(unix)]
+fn set_default_plugin_pane_pwd(env: &mut Vec<(String, String)>, cwd: &std::path::Path) {
+    if !env.iter().any(|(key, _)| key == "PWD") {
+        env.push(("PWD".to_string(), cwd.display().to_string()));
+    }
+}
+
 fn plugin_pane_protected_env_key(key: &str) -> bool {
     matches!(
         key,
@@ -350,4 +366,21 @@ fn plugin_pane_protected_env_key(key: &str) -> bool {
             | "HERDR_PLUGIN_CONTEXT_JSON"
             | "HERDR_BIN_PATH"
     )
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::set_default_plugin_pane_pwd;
+
+    #[test]
+    fn plugin_pane_pwd_defaults_to_cwd_without_overriding_explicit_env() {
+        let cwd = std::path::Path::new("/plugin-cwd");
+        let mut derived = vec![("OTHER".to_string(), "value".to_string())];
+        set_default_plugin_pane_pwd(&mut derived, cwd);
+        assert!(derived.contains(&("PWD".to_string(), "/plugin-cwd".to_string())));
+
+        let mut explicit = vec![("PWD".to_string(), "/caller-pwd".to_string())];
+        set_default_plugin_pane_pwd(&mut explicit, cwd);
+        assert_eq!(explicit, [("PWD".to_string(), "/caller-pwd".to_string())]);
+    }
 }
