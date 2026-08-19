@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- Tab bar status commands now remove complete ANSI terminal control sequences instead of displaying their sequence bodies as text. (#3001)
+
 ## [0.8.2] - 2026-08-19
 
 ### Added
