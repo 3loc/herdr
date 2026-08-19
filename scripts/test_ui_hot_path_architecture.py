@@ -161,6 +161,7 @@ class UiHotPathArchitectureTests(unittest.TestCase):
         )
 
     def test_app_and_server_avoid_aggregate_terminal_state(self) -> None:
+        self.assertTrue(APP_SERVER_SOURCES, "No app/server Rust sources were discovered")
         violations = find_violations(APP_SERVER_SOURCES, AGGREGATE_STATE_CALLS)
 
         self.assertEqual(

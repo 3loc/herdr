@@ -9784,15 +9784,17 @@ next_tab = ""
     }
 
     #[test]
-    fn direct_terminal_observer_keeps_hidden_pty_source_renderable() {
-        let (mut server, background_pane) = hidden_pty_visibility_test_server(&[]);
+    fn direct_terminal_observer_keeps_hidden_pty_source_renderable_with_app_client() {
+        let (mut server, background_pane) = hidden_pty_visibility_test_server(&[(120, 40)]);
+        assert!(!server.pty_sources_visible_to_any_render_target(&HashSet::from([background_pane])));
+
         let terminal_id = server.app.state.workspaces[0]
             .terminal_id(background_pane)
             .expect("background terminal id")
             .to_string();
         let (client_tx, _client_control_rx, _client_rx) = test_client_writer();
         server.clients.insert(
-            1,
+            2,
             ClientConnection::new_with_mode(
                 ClientConnectionMode::TerminalObserve { terminal_id },
                 None,
@@ -9800,7 +9802,7 @@ next_tab = ""
                 crate::kitty_graphics::HostCellSize::default(),
                 crate::terminal_theme::TerminalTheme::default(),
                 None,
-                1,
+                2,
                 RenderEncoding::SemanticFrame,
                 false,
                 Some(client_tx),

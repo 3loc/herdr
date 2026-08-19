@@ -8,9 +8,15 @@ fi
 
 candidate=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 [[ -x "$candidate" ]] || { echo "candidate binary is not executable: $candidate" >&2; exit 1; }
-for command in curl jq lsof perl tmux; do
+script_dir=$(cd "$(dirname "$0")" && pwd)
+repo_root=$(cd "$script_dir/.." && pwd)
+baseline=${HERDR_PERF_BASELINE_BIN:-}
+for command in jq lsof perl tmux; do
   command -v "$command" >/dev/null || { echo "required command not found: $command" >&2; exit 1; }
 done
+if [[ -z "$baseline" ]]; then
+  command -v curl >/dev/null || { echo "required command not found: curl" >&2; exit 1; }
+fi
 
 case "$(uname -s)" in
   Linux) platform=linux; command -v pidstat >/dev/null || { echo "required command not found: pidstat" >&2; exit 1; } ;;
@@ -25,12 +31,13 @@ esac
 
 root=$(mktemp -d /var/tmp/herdr-release-perf-smoke.XXXXXX)
 cleanup() { rm -rf "$root"; }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 mkdir -p "$root/results"
 
-baseline=${HERDR_PERF_BASELINE_BIN:-}
 if [[ -z "$baseline" ]]; then
-  baseline_version=$(jq -er '.version' website/latest.json)
+  baseline_version=$(jq -er '.version' "$repo_root/website/latest.json")
   baseline="$root/herdr-baseline"
   curl -fL --retry 3 \
     "https://github.com/herdrdev/herdr/releases/download/v${baseline_version}/herdr-${platform}-${arch}" \
@@ -41,7 +48,6 @@ else
 fi
 [[ -x "$baseline" ]] || { echo "baseline binary is not executable: $baseline" >&2; exit 1; }
 
-script_dir=$(cd "$(dirname "$0")" && pwd)
 case_script="$script_dir/release_perf_case.sh"
 seconds=${HERDR_PERF_SAMPLE_SECONDS:-10}
 warmup=${HERDR_PERF_WARMUP_SECONDS:-3}
@@ -68,6 +74,10 @@ printf '%-12s %12s %12s %12s\n' scenario baseline candidate change
 for scenario in hidden50 visible30; do
   baseline_total=$(mean_total baseline "$scenario")
   candidate_total=$(mean_total candidate "$scenario")
+  if awk -v before="$baseline_total" -v after="$candidate_total" 'BEGIN { exit !(before <= 0 || after <= 0) }'; then
+    echo "error: $scenario measured no CPU usage; the benchmark did not exercise the binaries" >&2
+    failed=1
+  fi
   change=$(awk -v before="$baseline_total" -v after="$candidate_total" 'BEGIN { if (before == 0) print "n/a"; else printf "%+.1f%%", (after-before)/before*100 }')
   printf '%-12s %12s %12s %12s\n' "$scenario" "$baseline_total" "$candidate_total" "$change"
   if awk -v before="$baseline_total" -v after="$candidate_total" 'BEGIN { exit !(after > before * 1.25 && after - before > 0.5) }'; then

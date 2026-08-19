@@ -50,7 +50,9 @@ cleanup() {
   tmux kill-session -t "$name" >/dev/null 2>&1 || true
   rm -rf "$state"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 printf -v launch 'exec '
 printf -v quoted '%q ' "${launch_env[@]}" "$bin" --session "$name"
@@ -65,6 +67,8 @@ done
 [[ -n "$panes_json" ]] || { echo "session API did not become ready" >&2; exit 1; }
 root_pane=$(printf '%s\n' "$panes_json" | jq -r '.result.panes[0].pane_id')
 workspace_id=$("${control_env[@]}" "$bin" workspace list | jq -r '.result.workspaces[0].workspace_id')
+[[ -n "$root_pane" && "$root_pane" != null ]] || { echo "session did not report a root pane" >&2; exit 1; }
+[[ -n "$workspace_id" && "$workspace_id" != null ]] || { echo "session did not report a workspace" >&2; exit 1; }
 pane_file="$state/pane-ids.txt"
 printf '%s\n' "$root_pane" > "$pane_file"
 
@@ -94,24 +98,23 @@ done
 [[ -n "$server_pid" ]] || { echo "could not find server pid" >&2; exit 1; }
 client_pid=$(tmux list-panes -s -t "$name" -F '#{pane_pid}')
 [[ -n "$client_pid" ]] || { echo "could not find client pid" >&2; exit 1; }
-all_pids="$server_pid $client_pid"
+all_pids=("$server_pid" "$client_pid")
 
 sleep "$warmup"
 raw="$out/cpu-raw.txt"
 if [[ $platform == linux ]]; then
-  pid_csv=$(printf '%s\n' $all_pids | paste -sd, -)
+  pid_csv=$(IFS=,; echo "${all_pids[*]}")
   LC_ALL=C pidstat -h -u -p "$pid_csv" 1 "$seconds" > "$raw"
 else
   top_args=(top -l $((seconds + 1)) -s 1 -stats pid,cpu,time -n 2)
-  for pid in $all_pids; do top_args+=(-pid "$pid"); done
+  for pid in "${all_pids[@]}"; do top_args+=(-pid "$pid"); done
   LC_ALL=C "${top_args[@]}" > "$raw"
 fi
 
 mean_linux() {
   awk -v target="$2" '
     /^Linux/ || /^#/ || NF < 5 { next }
-    { found=0; for (i=1; i<=NF; i++) if ($i == target) { found=1; break }
-      if (found && $(NF-2) ~ /^[0-9]+([.][0-9]+)?$/) { sum += $(NF-2); count++ } }
+    $3 == target && $(NF-2) ~ /^[0-9]+([.][0-9]+)?$/ { sum += $(NF-2); count++ }
     END { if (!count) exit 1; printf "%.6f,%d", sum/count, count }
   ' "$1"
 }
@@ -124,7 +127,7 @@ mean_macos() {
 }
 
 total=0
-for pid in $all_pids; do
+for pid in "${all_pids[@]}"; do
   if [[ $platform == linux ]]; then parsed=$(mean_linux "$raw" "$pid"); else parsed=$(mean_macos "$raw" "$pid"); fi
   mean=${parsed%,*}
   samples=${parsed#*,}

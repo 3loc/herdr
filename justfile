@@ -73,7 +73,7 @@ build:
 bench-render-scale:
     cargo test --release --locked --bin herdr render_scale_profile -- --ignored --nocapture --test-threads=1
 
-# Fast end-to-end CPU comparison against the current stable release
+# ~3-5 minute CPU comparison; downloads stable unless HERDR_PERF_BASELINE_BIN is set
 bench-release-smoke:
     cargo build --release --locked
     scripts/release_perf_smoke.sh "${CARGO_TARGET_DIR:-target}/release/herdr"
@@ -135,7 +135,7 @@ release-docs-check:
     just website-build
     cd website && bun run build:draft
 
-# Validate release docs and review full-render scaling before release preparation
+# Validate release docs, render scaling, and end-to-end CPU before release preparation
 pre-release-check:
     just release-docs-check
     just bench-render-scale
