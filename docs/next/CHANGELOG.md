@@ -4,6 +4,7 @@
 
 ### Fixed
 - Tab bar status commands now remove ESC-prefixed terminal control sequences instead of displaying their sequence bodies as text. (#3001)
+- Unix plugin pane commands now default `PWD` to their resolved working directory, so direct popup tools open at explicit `--cwd` paths while preserving caller-provided `PWD` values. (#2984)
 
 ## [0.8.2] - 2026-08-19
 
@@ -31,8 +32,6 @@
 - Experimental pane graphics now support bounded named layers, acknowledged full-RGBA primary-layer direct file frames on audited local terminals, owned BGRA fallback, exact pixel mouse input, and placement-only resize replay.
 
 ### Fixed
-- Unix plugin pane commands now default `PWD` to their resolved working directory, so direct popup tools open at explicit `--cwd` paths while preserving caller-provided `PWD` values. (#2984)
-- High-rate output from many hidden panes no longer floods the server loop with redundant wakeups, and terminal input-mode synchronization no longer formats pane scrollback to read one keyboard flag.
 - Live handoff now preserves mouse forwarding for running pane applications. (#3000, thanks @xkrogen)
 - Unix CLI commands now exit quietly when a downstream pipe closes instead of panicking with exit 101. (#2994)
 - The terminal theme now keeps the active Space row fill visible when the Navigate cursor lands on it, in both expanded and collapsed sidebars. (#2987)
