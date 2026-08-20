@@ -18,6 +18,7 @@
 - Windows panes now keep bare `cursor-agent` launches detected after Cursor hands off to its bundled Node process. (#3032)
 - Oversized Kitty images no longer prevent smaller images shown later in the same pane from rendering. (#3033)
 - `herdr agent explain --file` now reports fixture read failures as structured JSON instead of exposing Rust I/O debug output. (#3022)
+- Wayland clipboard copies no longer freeze Herdr while `wl-copy` remains alive to serve the selection. (#3014)
 - Claude Code panes now use visible turn, background shell, and background agent activity as working-state fallbacks when OSC titles are unavailable or disabled. (#1630, #2241)
 - Claude Code panes now remain working while MCP tasks continue in the background after a turn ends. (#3090)
 - Tab bar status commands now remove ESC-prefixed terminal control sequences instead of displaying their sequence bodies as text. (#3001)
