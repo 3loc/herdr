@@ -7,6 +7,7 @@
 - Removing a background worktree workspace no longer changes focus to its parent workspace. (#3098)
 - Prefix bindings such as `prefix+|` now recognize characters produced by macOS Option and custom keyboard layouts, while exact chords such as `prefix+alt+w` keep priority. (#3079, thanks @vlcinsky)
 - Direct terminal attaches now preserve multiline pastes as one paste instead of submitting each line separately. (#3054)
+- Windows clients now preserve layout-generated text for Shift-only keys, so characters such as `/` on German keyboards reach shell panes and pasted input. (#3045)
 - Windows panes now keep bare `cursor-agent` launches detected after Cursor hands off to its bundled Node process. (#3032)
 - Oversized Kitty images no longer prevent smaller images shown later in the same pane from rendering. (#3033)
 - Claude Code panes now use visible turn, background shell, and background agent activity as working-state fallbacks when OSC titles are unavailable or disabled. (#1630, #2241)
