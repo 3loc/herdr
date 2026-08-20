@@ -378,7 +378,9 @@ fn wrapped_agent_name_from_runtime_argv(runtime: &str, argv: Option<&[String]>) 
     let runtime_name = normalized_agent_lookup_name(path_basename(runtime));
 
     match runtime_name.as_str() {
-        "node" | "bun" => script_arg_agent_name(argv, &["-e", "--eval", "-p", "--print"], &[]),
+        "node" => cursor_agent_name_from_bundled_node_argv(argv)
+            .or_else(|| script_arg_agent_name(argv, &["-e", "--eval", "-p", "--print"], &[])),
+        "bun" => script_arg_agent_name(argv, &["-e", "--eval", "-p", "--print"], &[]),
         name if is_python_runtime(name) => script_arg_agent_name(argv, &["-c"], &["-m"]),
         "sh" | "bash" | "zsh" | "fish" => script_arg_agent_name(argv, &["-c"], &[]),
         "cmd" => windows_cmd_arg_agent_name(argv),
@@ -386,6 +388,36 @@ fn wrapped_agent_name_from_runtime_argv(runtime: &str, argv: Option<&[String]>) 
         "tmux" => None,
         _ => None,
     }
+}
+
+fn cursor_agent_name_from_bundled_node_argv(argv: &[String]) -> Option<String> {
+    let (runtime_parent, runtime_name) = path_parent_and_basename(argv.first()?)?;
+    let (script_parent, script_name) = path_parent_and_basename(argv.get(1)?)?;
+    if !runtime_name.eq_ignore_ascii_case("node.exe")
+        || !script_name.eq_ignore_ascii_case("index.js")
+        || !runtime_parent.eq_ignore_ascii_case(script_parent)
+    {
+        return None;
+    }
+
+    let mut tail = runtime_parent
+        .rsplit(['/', '\\'])
+        .filter(|component| !component.is_empty());
+    let (Some(version), Some(versions), Some(package)) = (tail.next(), tail.next(), tail.next())
+    else {
+        return None;
+    };
+    (package.eq_ignore_ascii_case("cursor-agent")
+        && versions.eq_ignore_ascii_case("versions")
+        && !version.trim().is_empty())
+    .then(|| agent_label(Agent::Cursor).to_string())
+}
+
+fn path_parent_and_basename(path: &str) -> Option<(&str, &str)> {
+    let split = path.rfind(['/', '\\'])?;
+    let parent = path[..split].trim_end_matches(['/', '\\']);
+    let basename = &path[split + 1..];
+    (!parent.is_empty() && !basename.is_empty()).then_some((parent, basename))
 }
 
 fn windows_cmd_arg_agent_name(argv: &[String]) -> Option<String> {
@@ -551,21 +583,6 @@ fn agent_name_from_path_token(token: &str) -> Option<String> {
 }
 
 fn agent_name_from_known_package_path(path: &str) -> Option<String> {
-    let mut tail = path
-        .rsplit(['/', '\\'])
-        .filter(|component| !component.is_empty());
-    if let (Some(entrypoint), Some(version), Some(versions), Some(package)) =
-        (tail.next(), tail.next(), tail.next(), tail.next())
-    {
-        if package.eq_ignore_ascii_case("cursor-agent")
-            && versions.eq_ignore_ascii_case("versions")
-            && !version.trim().is_empty()
-            && entrypoint.eq_ignore_ascii_case("index.js")
-        {
-            return Some(agent_label(Agent::Cursor).to_string());
-        }
-    }
-
     let components: Vec<String> = path
         .split(['/', '\\'])
         .filter(|component| !component.is_empty())
@@ -930,7 +947,7 @@ mod tests {
     }
 
     #[test]
-    fn identify_agent_in_job_ignores_non_entrypoint_cursor_script() {
+    fn identify_agent_in_job_ignores_invalid_windows_cursor_install_paths() {
         for script in [
             r"C:\Users\user\AppData\Local\cursor-agent\versions\2026.08.11-e8db854\scripts\postinstall.js",
             r"C:\Users\user\AppData\Local\cursor-agent\versions\2026.08.11-e8db854\index",
@@ -950,6 +967,19 @@ mod tests {
 
             assert_eq!(identify_agent_in_job(&job), None, "script: {script}");
         }
+
+        let lookalike = crate::platform::ForegroundJob {
+            process_group_id: 123,
+            processes: vec![foreground_process(
+                123,
+                "node.exe",
+                &[
+                    r"C:\Program Files\nodejs\node.exe",
+                    r"C:\workspace\cursor-agent\versions\test\index.js",
+                ],
+            )],
+        };
+        assert_eq!(identify_agent_in_job(&lookalike), None);
     }
 
     #[test]
