@@ -551,6 +551,21 @@ fn agent_name_from_path_token(token: &str) -> Option<String> {
 }
 
 fn agent_name_from_known_package_path(path: &str) -> Option<String> {
+    let mut tail = path
+        .rsplit(['/', '\\'])
+        .filter(|component| !component.is_empty());
+    if let (Some(entrypoint), Some(version), Some(versions), Some(package)) =
+        (tail.next(), tail.next(), tail.next(), tail.next())
+    {
+        if package.eq_ignore_ascii_case("cursor-agent")
+            && versions.eq_ignore_ascii_case("versions")
+            && !version.trim().is_empty()
+            && entrypoint.eq_ignore_ascii_case("index.js")
+        {
+            return Some(agent_label(Agent::Cursor).to_string());
+        }
+    }
+
     let components: Vec<String> = path
         .split(['/', '\\'])
         .filter(|component| !component.is_empty())
@@ -891,6 +906,49 @@ mod tests {
                 identify_agent_in_job(&job),
                 Some((Agent::Qwen, "qwen".to_string()))
             );
+        }
+    }
+
+    #[test]
+    fn identify_agent_in_job_detects_windows_cursor_install() {
+        let job = crate::platform::ForegroundJob {
+            process_group_id: 123,
+            processes: vec![foreground_process(
+                123,
+                "node.exe",
+                &[
+                    r"C:\Users\user\AppData\Local\cursor-agent\versions\2026.08.11-e8db854\node.exe",
+                    r"C:\Users\user\AppData\Local\cursor-agent\versions\2026.08.11-e8db854\index.js",
+                ],
+            )],
+        };
+
+        assert_eq!(
+            identify_agent_in_job(&job),
+            Some((Agent::Cursor, "cursor".to_string()))
+        );
+    }
+
+    #[test]
+    fn identify_agent_in_job_ignores_non_entrypoint_cursor_script() {
+        for script in [
+            r"C:\Users\user\AppData\Local\cursor-agent\versions\2026.08.11-e8db854\scripts\postinstall.js",
+            r"C:\Users\user\AppData\Local\cursor-agent\versions\2026.08.11-e8db854\index",
+            r"C:\Users\user\AppData\Local\cursor-agent\versions\2026.08.11-e8db854\index.exe",
+        ] {
+            let job = crate::platform::ForegroundJob {
+                process_group_id: 123,
+                processes: vec![foreground_process(
+                    123,
+                    "node.exe",
+                    &[
+                        r"C:\Users\user\AppData\Local\cursor-agent\versions\2026.08.11-e8db854\node.exe",
+                        script,
+                    ],
+                )],
+            };
+
+            assert_eq!(identify_agent_in_job(&job), None, "script: {script}");
         }
     }
 
