@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Fixed
+- Prefix bindings such as `prefix+|` now recognize characters produced by macOS Option and custom keyboard layouts, while exact chords such as `prefix+alt+w` keep priority. (#3079, thanks @vlcinsky)
 - Direct terminal attaches now preserve multiline pastes as one paste instead of submitting each line separately. (#3054)
 - Windows panes now keep bare `cursor-agent` launches detected after Cursor hands off to its bundled Node process. (#3032)
 - Oversized Kitty images no longer prevent smaller images shown later in the same pane from rendering. (#3033)
