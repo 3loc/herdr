@@ -35,7 +35,16 @@ herdr
 Windows:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://herdr.dev/install.ps1 | iex"
+$installer = Join-Path $env:TEMP "herdr-install-$([guid]::NewGuid().ToString('N')).ps1"
+try {
+    $curl = (Get-Command curl.exe -CommandType Application -ErrorAction Stop).Source
+    & $curl --fail --silent --show-error --location --proto "=https" --tlsv1.2 --output $installer -- https://herdr.dev/install.ps1
+    if ($LASTEXITCODE -ne 0) { throw "Failed to download the Herdr installer." }
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
+    if ($LASTEXITCODE -ne 0) { throw "The Herdr installer failed." }
+} finally {
+    Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
+}
 herdr
 ```
 

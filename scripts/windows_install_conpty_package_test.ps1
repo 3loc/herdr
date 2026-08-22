@@ -17,6 +17,17 @@ $installerAst = [System.Management.Automation.Language.Parser]::ParseFile(
 if ($parseErrors.Count -ne 0) {
     throw ($parseErrors | Out-String)
 }
+$forbiddenNetworkCommands = @(
+    $installerAst.FindAll(
+        { param($node) $node -is [System.Management.Automation.Language.CommandAst] },
+        $true
+    ) |
+        ForEach-Object { $_.GetCommandName() } |
+        Where-Object { $_ -in @("Invoke-RestMethod", "Invoke-WebRequest") }
+)
+if ($forbiddenNetworkCommands.Count -ne 0) {
+    throw "installer performs network downloads through PowerShell: $($forbiddenNetworkCommands -join ', ')"
+}
 foreach ($functionName in @("Prepend-PathEntry", "Update-PathRegistryEntry")) {
     $definition = $installerAst.FindAll(
         {

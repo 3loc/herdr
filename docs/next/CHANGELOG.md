@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Fixed
+- The public Windows installer now downloads through `curl.exe` and runs from a local file instead of piping a PowerShell web response into `Invoke-Expression`, avoiding the downloader pattern blocked by endpoint security tools. (#2751)
 - Retained mouse selections now copy when Ctrl+C or Cmd+C arrives before a delayed mouse release instead of forwarding the copy shortcut to the pane. (#3100, thanks @moret)
 - Removing a background worktree workspace no longer changes focus to its parent workspace. (#3098)
 - Prefix bindings such as `prefix+|` now recognize characters produced by macOS Option and custom keyboard layouts, while exact chords such as `prefix+alt+w` keep priority. (#3079, thanks @vlcinsky)

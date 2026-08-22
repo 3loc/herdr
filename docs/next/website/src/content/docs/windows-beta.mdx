@@ -10,7 +10,16 @@ Herdr on Windows uses ConPTY and Windows process/runtime behavior instead of the
 Install Herdr natively on Windows with PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://herdr.dev/install.ps1 | iex"
+$installer = Join-Path $env:TEMP "herdr-install-$([guid]::NewGuid().ToString('N')).ps1"
+try {
+    $curl = (Get-Command curl.exe -CommandType Application -ErrorAction Stop).Source
+    & $curl --fail --silent --show-error --location --proto "=https" --tlsv1.2 --output $installer -- https://herdr.dev/install.ps1
+    if ($LASTEXITCODE -ne 0) { throw "Failed to download the Herdr installer." }
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
+    if ($LASTEXITCODE -ne 0) { throw "The Herdr installer failed." }
+} finally {
+    Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
+}
 ```
 
 Windows builds are available through both stable and preview update channels. New installs use stable by default, and stable is recommended for normal use. Existing preview installs stay on preview until you run `herdr channel set stable`. If an older preview build rejects that command, run `herdr update` once on preview and retry. Preview provides newer, less-tested fixes from `master` and may regress; opt in with `herdr channel set preview` only when you want that tradeoff.

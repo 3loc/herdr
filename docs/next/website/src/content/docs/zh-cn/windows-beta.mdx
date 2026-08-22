@@ -10,7 +10,16 @@ Windows 上的 Herdr 使用 ConPTY 和 Windows 的进程/运行时行为,而不�
 使用 PowerShell 在 Windows 上原生安装 Herdr:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://herdr.dev/install.ps1 | iex"
+$installer = Join-Path $env:TEMP "herdr-install-$([guid]::NewGuid().ToString('N')).ps1"
+try {
+    $curl = (Get-Command curl.exe -CommandType Application -ErrorAction Stop).Source
+    & $curl --fail --silent --show-error --location --proto "=https" --tlsv1.2 --output $installer -- https://herdr.dev/install.ps1
+    if ($LASTEXITCODE -ne 0) { throw "Failed to download the Herdr installer." }
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
+    if ($LASTEXITCODE -ne 0) { throw "The Herdr installer failed." }
+} finally {
+    Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
+}
 ```
 
 Windows 构建同时通过稳定版和预览版更新通道提供。新安装默认使用稳定版,常规使用也建议选择稳定版。现有预览安装会继续留在预览通道,直到你运行 `herdr channel set stable`。如果旧预览构建拒绝该命令,请先在预览通道运行一次 `herdr update`,再重试。预览版会提供来自 `master` 的更新、测试较少的修复,也可能出现回归;只有在接受这一取舍时,才应通过 `herdr channel set preview` 主动启用。
