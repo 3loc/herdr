@@ -239,7 +239,9 @@ function Invoke-CurlDownload {
         "--silent",
         "--show-error",
         "--location",
-        "--connect-timeout", "30"
+        "--connect-timeout", "30",
+        "--speed-limit", "1024",
+        "--speed-time", "30"
     )
     if ($parsedUri.Scheme -eq "https") {
         $arguments += @("--proto", "=https", "--tlsv1.2")
