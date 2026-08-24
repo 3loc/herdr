@@ -741,10 +741,31 @@ fn run_clipboard_command(command: &ClipboardCommand, bytes: &[u8]) -> bool {
     drop(stdin);
 
     if command.program == "wl-copy" {
-        return detach_clipboard_owner(child);
+        return wait_for_wl_copy_startup(child);
     }
 
     child.wait().map(|status| status.success()).unwrap_or(false)
+}
+
+fn wait_for_wl_copy_startup(mut child: std::process::Child) -> bool {
+    const STARTUP_WAIT: std::time::Duration = std::time::Duration::from_millis(100);
+    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(5);
+
+    let deadline = std::time::Instant::now() + STARTUP_WAIT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(POLL_INTERVAL);
+            }
+            Ok(None) => return detach_clipboard_owner(child),
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
 }
 
 fn detach_clipboard_owner(child: std::process::Child) -> bool {
@@ -1173,6 +1194,91 @@ mod tests {
             owner_was_reaped,
             "wl-copy owner should be reaped after exit"
         );
+    }
+
+    #[test]
+    fn failed_wl_copy_uses_x11_fallback() {
+        use std::ffi::OsString;
+        use std::os::unix::fs::PermissionsExt;
+        use std::path::PathBuf;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        struct Cleanup {
+            old_path: Option<OsString>,
+            old_wayland_display: Option<OsString>,
+            old_display: Option<OsString>,
+            temp_dir: PathBuf,
+        }
+
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                unsafe {
+                    match self.old_path.take() {
+                        Some(value) => std::env::set_var("PATH", value),
+                        None => std::env::remove_var("PATH"),
+                    }
+                    match self.old_wayland_display.take() {
+                        Some(value) => std::env::set_var("WAYLAND_DISPLAY", value),
+                        None => std::env::remove_var("WAYLAND_DISPLAY"),
+                    }
+                    match self.old_display.take() {
+                        Some(value) => std::env::set_var("DISPLAY", value),
+                        None => std::env::remove_var("DISPLAY"),
+                    }
+                    std::env::remove_var("HERDR_TEST_XCLIP_PAYLOAD");
+                }
+                let _ = std::fs::remove_dir_all(&self.temp_dir);
+            }
+        }
+
+        let _guard = env_lock().lock().unwrap();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should follow unix epoch")
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!(
+            "herdr-failed-wl-copy-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&temp_dir).expect("temp dir should be created");
+        let cleanup = Cleanup {
+            old_path: std::env::var_os("PATH"),
+            old_wayland_display: std::env::var_os("WAYLAND_DISPLAY"),
+            old_display: std::env::var_os("DISPLAY"),
+            temp_dir: temp_dir.clone(),
+        };
+        let payload = temp_dir.join("xclip-payload");
+        let fake_wl_copy = temp_dir.join("wl-copy");
+        let fake_xclip = temp_dir.join("xclip");
+        std::fs::write(&fake_wl_copy, "#!/bin/sh\n/bin/cat >/dev/null\nexit 7\n")
+            .expect("fake wl-copy should be written");
+        std::fs::write(
+            &fake_xclip,
+            "#!/bin/sh\n/bin/cat > \"$HERDR_TEST_XCLIP_PAYLOAD\"\n",
+        )
+        .expect("fake xclip should be written");
+        for command in [&fake_wl_copy, &fake_xclip] {
+            let mut permissions = std::fs::metadata(command)
+                .expect("fake clipboard command metadata")
+                .permissions();
+            permissions.set_mode(0o700);
+            std::fs::set_permissions(command, permissions)
+                .expect("fake clipboard command should be executable");
+        }
+
+        unsafe {
+            std::env::set_var("PATH", &temp_dir);
+            std::env::set_var("WAYLAND_DISPLAY", "wayland-0");
+            std::env::set_var("DISPLAY", ":0");
+            std::env::set_var("HERDR_TEST_XCLIP_PAYLOAD", &payload);
+        }
+
+        assert!(write_clipboard(b"clipboard fallback"));
+        assert_eq!(
+            std::fs::read(&payload).expect("xclip should record stdin"),
+            b"clipboard fallback"
+        );
+        drop(cleanup);
     }
 
     #[test]
