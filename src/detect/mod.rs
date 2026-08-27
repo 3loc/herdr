@@ -290,12 +290,17 @@ fn resume_options_for_process(
 ) -> Option<Vec<String>> {
     let argv = process.argv.as_deref()?;
     let label = agent_label(agent);
-    let agent_token = argv
+    let options_start = argv
         .iter()
-        .position(|token| agent_name_from_path_token(token).as_deref() == Some(label))?;
+        .position(|token| agent_name_from_path_token(token).as_deref() == Some(label))
+        .map(|agent_token| agent_token + 1)
+        .or_else(|| {
+            (agent == Agent::Cursor && cursor_agent_name_from_bundled_node_argv(argv).is_some())
+                .then_some(2)
+        })?;
     Some(manifest::filter_resume_options(
         agent,
-        &argv[agent_token + 1..],
+        &argv[options_start..],
     ))
 }
 
@@ -1014,6 +1019,33 @@ mod tests {
         assert_eq!(
             identify_agent_in_job(&job),
             Some((Agent::Cursor, "cursor".to_string()))
+        );
+    }
+
+    #[test]
+    fn windows_cursor_install_preserves_resume_options_after_the_script() {
+        let job = crate::platform::ForegroundJob {
+            process_group_id: 123,
+            processes: vec![foreground_process(
+                123,
+                "node.exe",
+                &[
+                    r"C:\Users\user\AppData\Local\cursor-agent\versions\2026.08.11-e8db854\node.exe",
+                    r"C:\Users\user\AppData\Local\cursor-agent\versions\2026.08.11-e8db854\index.js",
+                    "--model",
+                    "composer-1",
+                    "--yolo",
+                ],
+            )],
+        };
+
+        assert_eq!(
+            resume_options_in_job(&job, Agent::Cursor),
+            Some(vec![
+                "--model".to_string(),
+                "composer-1".to_string(),
+                "--yolo".to_string(),
+            ])
         );
     }
 
