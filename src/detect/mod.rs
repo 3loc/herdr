@@ -293,11 +293,13 @@ fn resume_options_for_process(
     let options_start = argv
         .iter()
         .position(|token| agent_name_from_path_token(token).as_deref() == Some(label))
-        .map(|agent_token| agent_token + 1)
-        .or_else(|| {
-            (agent == Agent::Cursor && cursor_agent_name_from_bundled_node_argv(argv).is_some())
-                .then_some(2)
-        })?;
+        .map(|agent_token| agent_token + 1);
+    #[cfg(windows)]
+    let options_start = options_start.or_else(|| {
+        (agent == Agent::Cursor && cursor_agent_name_from_bundled_node_argv(argv).is_some())
+            .then_some(2)
+    });
+    let options_start = options_start?;
     Some(manifest::filter_resume_options(
         agent,
         &argv[options_start..],
@@ -433,8 +435,13 @@ fn wrapped_agent_name_from_runtime_argv(runtime: &str, argv: Option<&[String]>) 
     let runtime_name = normalized_agent_lookup_name(path_basename(runtime));
 
     match runtime_name.as_str() {
-        "node" => cursor_agent_name_from_bundled_node_argv(argv)
-            .or_else(|| script_arg_agent_name(argv, &["-e", "--eval", "-p", "--print"], &[])),
+        "node" => {
+            #[cfg(windows)]
+            if let Some(agent) = cursor_agent_name_from_bundled_node_argv(argv) {
+                return Some(agent);
+            }
+            script_arg_agent_name(argv, &["-e", "--eval", "-p", "--print"], &[])
+        }
         "bun" => script_arg_agent_name(argv, &["-e", "--eval", "-p", "--print"], &[]),
         name if is_python_runtime(name) => script_arg_agent_name(argv, &["-c"], &["-m"]),
         "sh" | "bash" | "zsh" | "fish" => script_arg_agent_name(argv, &["-c"], &[]),
@@ -445,6 +452,7 @@ fn wrapped_agent_name_from_runtime_argv(runtime: &str, argv: Option<&[String]>) 
     }
 }
 
+#[cfg(windows)]
 fn cursor_agent_name_from_bundled_node_argv(argv: &[String]) -> Option<String> {
     let (runtime_parent, runtime_name) = path_parent_and_basename(argv.first()?)?;
     let (script_parent, script_name) = path_parent_and_basename(argv.get(1)?)?;
@@ -468,6 +476,7 @@ fn cursor_agent_name_from_bundled_node_argv(argv: &[String]) -> Option<String> {
     .then(|| agent_label(Agent::Cursor).to_string())
 }
 
+#[cfg(windows)]
 fn path_parent_and_basename(path: &str) -> Option<(&str, &str)> {
     let split = path.rfind(['/', '\\'])?;
     let parent = path[..split].trim_end_matches(['/', '\\']);
@@ -1002,6 +1011,7 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
     #[test]
     fn identify_agent_in_job_detects_windows_cursor_install() {
         let job = crate::platform::ForegroundJob {
@@ -1022,6 +1032,7 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
     #[test]
     fn windows_cursor_install_preserves_resume_options_after_the_script() {
         let job = crate::platform::ForegroundJob {
@@ -1049,6 +1060,7 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
     #[test]
     fn identify_agent_in_job_ignores_invalid_windows_cursor_install_paths() {
         for script in [
