@@ -299,11 +299,14 @@ fn resume_options_for_process(
         (agent == Agent::Cursor && cursor_agent_name_from_bundled_node_argv(argv).is_some())
             .then_some(2)
     });
-    let options_start = options_start?;
-    Some(manifest::filter_resume_options(
-        agent,
-        &argv[options_start..],
-    ))
+    if let Some(options_start) = options_start {
+        return Some(manifest::filter_resume_options(
+            agent,
+            &argv[options_start..],
+        ));
+    }
+
+    command_wrapper_text(argv).and_then(|command| command_text_resume_options(command, agent))
 }
 
 /// Detect the state of an agent from the live terminal tail snapshot.
@@ -484,16 +487,25 @@ fn path_parent_and_basename(path: &str) -> Option<(&str, &str)> {
     (!parent.is_empty() && !basename.is_empty()).then_some((parent, basename))
 }
 
+fn command_wrapper_text(argv: &[String]) -> Option<&str> {
+    let runtime = normalized_agent_lookup_name(path_basename(argv.first()?));
+    match runtime.as_str() {
+        "cmd" => windows_cmd_command_text(argv),
+        "powershell" | "pwsh" => powershell_command_text(argv),
+        _ => None,
+    }
+}
+
 fn windows_cmd_arg_agent_name(argv: &[String]) -> Option<String> {
+    windows_cmd_command_text(argv).and_then(command_text_agent_name)
+}
+
+fn windows_cmd_command_text(argv: &[String]) -> Option<&str> {
     let mut args = argv.iter().skip(1);
     while let Some(arg) = args.next() {
         let flag = arg.trim_matches('"').to_lowercase();
         match flag.as_str() {
-            "/c" | "/k" => {
-                return args
-                    .next()
-                    .and_then(|command| command_text_agent_name(command))
-            }
+            "/c" | "/k" => return args.next().map(String::as_str),
             "/d" | "/s" | "/q" | "/a" | "/u" | "/e:on" | "/e:off" | "/f:on" | "/f:off"
             | "/v:on" | "/v:off" => continue,
             _ => {}
@@ -529,7 +541,50 @@ fn powershell_arg_agent_name(argv: &[String]) -> Option<String> {
     None
 }
 
+fn powershell_command_text(argv: &[String]) -> Option<&str> {
+    let mut args = argv.iter().skip(1);
+    while let Some(arg) = args.next() {
+        let flag = arg.trim_matches('"').to_lowercase();
+        match flag.as_str() {
+            "-command" | "-c" | "/command" | "/c" => return args.next().map(String::as_str),
+            "-file" | "-f" | "/file" | "-encodedcommand" | "-enc" | "/encodedcommand" | "/enc" => {
+                return None
+            }
+            "-configurationname" | "-executionpolicy" | "-outputformat" | "-psconsolefile"
+            | "-version" | "-windowstyle" | "-workingdirectory" => {
+                let _ = args.next();
+            }
+            _ if flag.starts_with('-') || flag.starts_with('/') => {}
+            _ => return None,
+        }
+    }
+    None
+}
+
 fn command_text_agent_name(command: &str) -> Option<String> {
+    let (agent, _) = command_text_agent(command)?;
+    Some(agent)
+}
+
+fn command_text_resume_options(command: &str, agent: Agent) -> Option<Vec<String>> {
+    let (detected_agent, mut rest) = command_text_agent(command)?;
+    if detected_agent != agent_label(agent) {
+        return None;
+    }
+
+    let mut args = Vec::new();
+    while let Some((token, next)) = command_text_token(rest) {
+        let token = token.trim();
+        if matches!(token, "&" | "&&" | "|" | "||" | ";") {
+            break;
+        }
+        args.push(token.to_string());
+        rest = next;
+    }
+    Some(manifest::filter_resume_options(agent, &args))
+}
+
+fn command_text_agent(command: &str) -> Option<(String, &str)> {
     let mut rest = command;
     while let Some((token, next)) = command_text_token(rest) {
         let token = token.trim();
@@ -540,7 +595,7 @@ fn command_text_agent_name(command: &str) -> Option<String> {
             rest = next;
             continue;
         }
-        return agent_name_from_path_token(token);
+        return agent_name_from_path_token(token).map(|agent| (agent, next));
     }
     None
 }
@@ -1322,6 +1377,51 @@ mod tests {
         assert_eq!(
             identify_agent_in_job(&job),
             Some((Agent::Codex, "codex".to_string()))
+        );
+    }
+
+    #[test]
+    fn resume_options_in_job_reads_options_from_windows_cmd_command_text() {
+        let job = crate::platform::ForegroundJob {
+            process_group_id: 123,
+            processes: vec![foreground_process(
+                1,
+                "cmd.exe",
+                &[
+                    "cmd.exe",
+                    "/D",
+                    "/S",
+                    "/C",
+                    "C:\\Users\\herdr\\AppData\\Roaming\\npm\\codex.cmd --model \"gpt 5\" && echo done",
+                ],
+            )],
+        };
+
+        assert_eq!(
+            resume_options_in_job(&job, Agent::Codex),
+            Some(vec!["--model".to_string(), "gpt 5".to_string()])
+        );
+    }
+
+    #[test]
+    fn resume_options_in_job_reads_options_from_powershell_command_text() {
+        let job = crate::platform::ForegroundJob {
+            process_group_id: 123,
+            processes: vec![foreground_process(
+                1,
+                "powershell.exe",
+                &[
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-Command",
+                    "& 'C:\\Tools\\claude.ps1' --name 'worker one' ; echo done",
+                ],
+            )],
+        };
+
+        assert_eq!(
+            resume_options_in_job(&job, Agent::Claude),
+            Some(vec!["--name".to_string(), "worker one".to_string()])
         );
     }
 
