@@ -955,7 +955,7 @@ fn validate_resume_options(resume_options: &ManifestResumeOptions) -> Result<(),
     }
     let mut seen = std::collections::HashSet::new();
     for option in resume_options.flags.iter().chain(&resume_options.options) {
-        if option.len() > MAX_RESUME_OPTION_CHARS {
+        if option.chars().count() > MAX_RESUME_OPTION_CHARS {
             return Err(format!(
                 "resume option exceeds {MAX_RESUME_OPTION_CHARS} characters"
             ));

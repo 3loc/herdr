@@ -350,6 +350,15 @@ fn manifest_validation_rejects_ambiguous_resume_options() {
 }
 
 #[test]
+fn resume_option_length_counts_characters_like_the_website_validator() {
+    let at_limit = format!("-{}", "é".repeat(MAX_RESUME_OPTION_CHARS - 1));
+    assert!(parse_manifest(&resume_options_manifest(&[&at_limit], &[])).is_ok());
+
+    let over_limit = format!("-{}", "é".repeat(MAX_RESUME_OPTION_CHARS));
+    assert!(parse_manifest(&resume_options_manifest(&[&over_limit], &[])).is_err());
+}
+
+#[test]
 fn all_bundled_manifests_parse_and_validate() {
     for agent in Agent::MANIFEST_AGENTS {
         assert!(
