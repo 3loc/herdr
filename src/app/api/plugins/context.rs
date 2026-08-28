@@ -381,19 +381,27 @@ impl App {
     }
 
     fn selected_text_for_pane(&self, pane_id: crate::layout::PaneId) -> Option<String> {
-        let selection = self.state.selection.as_ref()?;
-        if selection.pane_id != pane_id || !selection.is_visible() {
-            return None;
-        }
-        let terminal_id = self
-            .state
-            .workspaces
-            .iter()
-            .find_map(|workspace| workspace.terminal_id(pane_id))?;
-        self.terminal_runtimes
-            .get(terminal_id)
-            .and_then(|runtime| runtime.extract_selection(selection))
-            .filter(|text| !text.is_empty())
+        let live_selection = self.state.selection.as_ref().and_then(|selection| {
+            if selection.pane_id != pane_id || !selection.is_visible() {
+                return None;
+            }
+            let terminal_id = self
+                .state
+                .workspaces
+                .iter()
+                .find_map(|workspace| workspace.terminal_id(pane_id))?;
+            self.terminal_runtimes
+                .get(terminal_id)
+                .and_then(|runtime| runtime.extract_selection(selection))
+                .filter(|text| !text.is_empty())
+        });
+        live_selection.or_else(|| {
+            self.state
+                .selection_snapshot
+                .as_ref()
+                .filter(|snapshot| snapshot.pane_id == pane_id)
+                .map(|snapshot| snapshot.text.clone())
+        })
     }
 
     fn default_cwd_for_workspace(&self, ws_idx: usize) -> std::path::PathBuf {

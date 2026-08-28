@@ -66,6 +66,7 @@ impl App {
         }
 
         if self.state.is_prefix_key(&raw_key) {
+            self.state.selection_snapshot = None;
             if self.state.copy_mode_pane_is_focused() {
                 self.state.cancel_copy_mode(&self.terminal_runtimes);
             }
@@ -76,17 +77,36 @@ impl App {
         }
 
         if key.code == KeyCode::Esc {
+            self.state.selection_snapshot = None;
             leave_command_mode(&mut self.state);
             return;
         }
 
         match prefix_binding_for_key(&self.state, &raw_key) {
-            Some(PrefixBindingMatch::Action(action)) => self.execute_prefix_key_action(action),
-            Some(PrefixBindingMatch::Command(binding)) => {
-                self.cancel_copy_mode_if_active();
-                self.launch_custom_command(binding, ActionContext::Prefix);
+            Some(PrefixBindingMatch::Action(action)) => {
+                self.state.selection_snapshot = None;
+                self.execute_prefix_key_action(action);
             }
-            None => leave_command_mode(&mut self.state),
+            Some(PrefixBindingMatch::Command(binding)) => {
+                let selection_aware =
+                    binding.action == crate::config::CustomCommandAction::PluginAction;
+                if !selection_aware {
+                    self.state.selection_snapshot = None;
+                    self.cancel_copy_mode_if_active();
+                }
+                self.launch_custom_command(binding, ActionContext::Prefix);
+                if selection_aware {
+                    if self.state.copy_mode.is_some() {
+                        self.cancel_copy_mode_if_active();
+                    } else {
+                        self.state.clear_selection();
+                    }
+                }
+            }
+            None => {
+                self.state.selection_snapshot = None;
+                leave_command_mode(&mut self.state);
+            }
         }
     }
 

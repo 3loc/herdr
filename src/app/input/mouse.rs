@@ -87,9 +87,14 @@ impl AppState {
             | MouseEventKind::ScrollDown
             | MouseEventKind::ScrollLeft
             | MouseEventKind::ScrollRight => {
+                self.selection_snapshot = None;
                 self.forward_pane_reported_wheel(terminal_runtimes, &info, mouse);
             }
-            MouseEventKind::Down(_) | MouseEventKind::Up(_) | MouseEventKind::Drag(_) => {
+            MouseEventKind::Down(_) => {
+                self.selection_snapshot = None;
+                self.forward_pane_mouse_button(terminal_runtimes, &info, mouse);
+            }
+            MouseEventKind::Up(_) | MouseEventKind::Drag(_) => {
                 self.forward_pane_mouse_button(terminal_runtimes, &info, mouse);
             }
             MouseEventKind::Moved => {
@@ -104,6 +109,15 @@ impl AppState {
         source_id: crate::app::InputSourceId,
         mouse: MouseEvent,
     ) -> Option<MouseAction> {
+        match mouse.kind {
+            MouseEventKind::Down(_) => self.selection_snapshot = None,
+            MouseEventKind::ScrollUp
+            | MouseEventKind::ScrollDown
+            | MouseEventKind::ScrollLeft
+            | MouseEventKind::ScrollRight => self.selection_snapshot = None,
+            _ => {}
+        }
+
         if self.mode == Mode::Onboarding {
             self.handle_onboarding_mouse(mouse);
             return None;
@@ -223,8 +237,7 @@ impl AppState {
 
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                self.selection = None;
-                self.selection_autoscroll = None;
+                self.clear_selection();
                 self.clear_chrome_press(source_id);
 
                 if self.mode == Mode::ConfirmClose {
@@ -638,8 +651,7 @@ impl AppState {
                     }
 
                     if self.forward_pane_mouse_button(terminal_runtimes, &info, mouse) {
-                        self.selection = None;
-                        self.selection_autoscroll = None;
+                        self.clear_selection();
                         return self.mouse_pane_focus_action(info.id);
                     }
 
@@ -679,8 +691,7 @@ impl AppState {
                 {
                     if let Some(info) = self.pane_mouse_target(mouse.column, mouse.row).cloned() {
                         if self.forward_pane_mouse_button(terminal_runtimes, &info, mouse) {
-                            self.selection = None;
-                            self.selection_autoscroll = None;
+                            self.clear_selection();
                             return None;
                         }
                     }
@@ -845,8 +856,11 @@ impl AppState {
                         // Double-click already finalized this word selection.
                     } else if self.copy_on_select {
                         self.copy_selection(terminal_runtimes);
-                    } else if let Some(selection) = self.selection.as_mut() {
-                        selection.finish();
+                    } else {
+                        if let Some(selection) = self.selection.as_mut() {
+                            selection.finish();
+                        }
+                        self.snapshot_selection_text(terminal_runtimes);
                     }
                     return None;
                 }
@@ -857,8 +871,7 @@ impl AppState {
                 {
                     if let Some(info) = self.pane_mouse_target(mouse.column, mouse.row).cloned() {
                         if self.forward_pane_mouse_button(terminal_runtimes, &info, mouse) {
-                            self.selection = None;
-                            self.selection_autoscroll = None;
+                            self.clear_selection();
                             return None;
                         }
                     }
@@ -970,8 +983,7 @@ impl AppState {
                 if !in_sidebar && self.scroll_selection_with_wheel(terminal_runtimes, mouse) => {}
 
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown if !in_sidebar => {
-                self.selection = None;
-                self.selection_autoscroll = None;
+                self.clear_selection();
                 self.handle_terminal_wheel(terminal_runtimes, mouse);
             }
 
@@ -1677,8 +1689,7 @@ impl AppState {
             return false;
         }
 
-        self.selection = None;
-        self.selection_autoscroll = None;
+        self.clear_selection();
         self.clear_chrome_press(source_id);
         self.drag = None;
         self.context_menu = None;

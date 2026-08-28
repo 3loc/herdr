@@ -1657,6 +1657,20 @@ impl AppState {
         pane_ids: impl IntoIterator<Item = PaneId>,
     ) {
         let pane_ids = pane_ids.into_iter().collect::<Vec<_>>();
+        if self
+            .selection
+            .as_ref()
+            .is_some_and(|selection| pane_ids.contains(&selection.pane_id))
+        {
+            self.clear_selection_highlight();
+        }
+        if self
+            .selection_snapshot
+            .as_ref()
+            .is_some_and(|snapshot| pane_ids.contains(&snapshot.pane_id))
+        {
+            self.selection_snapshot = None;
+        }
         self.clear_copy_mode_for_removed_panes(pane_ids.iter().copied());
         if self
             .previous_pane_focus
@@ -1674,8 +1688,7 @@ impl AppState {
         if self.workspaces.is_empty() {
             return;
         }
-        self.selection = None;
-        self.selection_autoscroll = None;
+        self.clear_selection();
         self.mark_session_dirty();
         let close_indices = self.workspace_close_indices(self.selected);
 
@@ -2052,8 +2065,7 @@ impl AppState {
             }
         }
 
-        self.selection = None;
-        self.selection_autoscroll = None;
+        self.clear_selection();
         self.mark_session_dirty();
         let terminal_ids = active
             .and_then(|i| {
@@ -2099,8 +2111,7 @@ impl AppState {
             }
         }
 
-        self.selection = None;
-        self.selection_autoscroll = None;
+        self.clear_selection();
         self.mark_session_dirty();
         let should_close_workspace = self
             .active
@@ -2147,8 +2158,33 @@ impl AppState {
 
 impl AppState {
     pub fn clear_selection(&mut self) {
+        self.clear_selection_highlight();
+        self.selection_snapshot = None;
+    }
+
+    pub(crate) fn clear_selection_highlight(&mut self) {
         self.selection = None;
         self.selection_autoscroll = None;
+    }
+
+    pub(crate) fn snapshot_selection_text(
+        &mut self,
+        terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
+    ) {
+        let Some(selection) = self.selection.as_ref() else {
+            return;
+        };
+        let pane_id = selection.pane_id;
+        let text = self
+            .active
+            .filter(|ws_idx| self.workspaces.get(*ws_idx).is_some())
+            .and_then(|ws_idx| {
+                self.runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, pane_id)
+            })
+            .and_then(|runtime| runtime.extract_selection(selection))
+            .filter(|text| !text.is_empty());
+        self.selection_snapshot =
+            text.map(|text| crate::app::state::SelectionSnapshot { pane_id, text });
     }
 
     pub(crate) fn stop_selection_autoscroll_state(&mut self) {
@@ -2207,24 +2243,25 @@ impl AppState {
             return false;
         }
 
-        let text = if self.copy_on_select {
-            let Some(text) = rt
-                .extract_selection(&selection)
-                .filter(|text| !text.is_empty())
-            else {
-                self.clear_selection();
-                return false;
-            };
-            Some(text)
-        } else {
-            None
-        };
+        let text = rt
+            .extract_selection(&selection)
+            .filter(|text| !text.is_empty());
+        if self.copy_on_select && text.is_none() {
+            self.clear_selection();
+            return false;
+        }
 
         self.selection = Some(selection);
         self.selection_autoscroll = None;
         if let Some(text) = text {
-            self.request_clipboard_write = Some(text.into_bytes());
-            info!("copied double-clicked token to clipboard");
+            self.selection_snapshot = Some(crate::app::state::SelectionSnapshot {
+                pane_id,
+                text: text.clone(),
+            });
+            if self.copy_on_select {
+                self.request_clipboard_write = Some(text.into_bytes());
+                info!("copied double-clicked token to clipboard");
+            }
         }
         true
     }
@@ -2291,15 +2328,19 @@ impl AppState {
 
         let text = self
             .runtime_for_pane_in_workspace(terminal_runtimes, ws_idx, sel.pane_id)
-            .and_then(|rt| rt.extract_selection(&sel));
+            .and_then(|rt| rt.extract_selection(&sel))
+            .filter(|text| !text.is_empty());
+        self.selection_snapshot = None;
         if let Some(text) = text {
-            if !text.is_empty() {
-                self.request_clipboard_write = Some(text.into_bytes());
-                info!("copied selection to clipboard");
-            }
+            self.request_clipboard_write = Some(text.clone().into_bytes());
+            self.selection_snapshot = Some(crate::app::state::SelectionSnapshot {
+                pane_id: sel.pane_id,
+                text,
+            });
+            info!("copied selection to clipboard");
         }
 
-        self.clear_selection();
+        self.clear_selection_highlight();
     }
 }
 
@@ -3350,15 +3391,6 @@ impl AppState {
             return;
         };
 
-        if self
-            .selection
-            .as_ref()
-            .is_some_and(|s| s.pane_id == pane_id)
-        {
-            self.selection = None;
-            self.selection_autoscroll = None;
-        }
-
         let pane_terminal_id = self.terminal_id_for_pane(ws_idx, pane_id);
         let workspace_terminal_ids = self.terminal_ids_for_workspace(ws_idx);
         self.pane_id_aliases.retain(|_, alias| *alias != pane_id);
@@ -3439,6 +3471,20 @@ mod tests {
             state.mode = Mode::Terminal;
         }
         state
+    }
+
+    #[test]
+    fn removing_pane_clears_its_selection_snapshot() {
+        let mut state = AppState::test_new();
+        let pane_id = PaneId::alloc();
+        state.selection_snapshot = Some(crate::app::state::SelectionSnapshot {
+            pane_id,
+            text: "selected".to_string(),
+        });
+
+        state.remove_plugin_pane_records([pane_id]);
+
+        assert!(state.selection_snapshot.is_none());
     }
 
     fn mark_linked_worktree(state: &mut AppState, ws_idx: usize) {

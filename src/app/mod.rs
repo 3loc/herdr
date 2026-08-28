@@ -625,6 +625,7 @@ impl App {
             workspace_presses: HashMap::new(),
             tab_presses: HashMap::new(),
             selection: None,
+            selection_snapshot: None,
             selection_autoscroll: None,
             context_menu: None,
             update_available,

@@ -43,8 +43,12 @@ impl App {
     ) -> Option<TerminalInputTarget> {
         match self.prepare_popup_key_forward(key.clone()) {
             PreparedPopupInput::NotOpen => {}
-            PreparedPopupInput::Consumed => return None,
+            PreparedPopupInput::Consumed => {
+                self.state.selection_snapshot = None;
+                return None;
+            }
             PreparedPopupInput::Bytes { target, bytes } => {
+                self.state.selection_snapshot = None;
                 let Some(runtime) = self.popup_runtime() else {
                     self.close_popup_pane();
                     return None;
@@ -70,13 +74,13 @@ impl App {
             return None;
         }
 
-        self.state.clear_selection();
         self.selection_autoscroll_deadline = None;
         self.state.update_dismissed = true;
 
         if let Some(action) =
             super::terminal_direct_non_indexed_navigation_action(&self.state, &key)
         {
+            self.state.clear_selection();
             debug!(
                 code = ?key_event.code,
                 modifiers = ?key_event.modifiers,
@@ -104,11 +108,20 @@ impl App {
                 command = %binding.label,
                 "intercepted terminal direct custom command before forwarding to pane"
             );
+            let selection_aware =
+                binding.action == crate::config::CustomCommandAction::PluginAction;
+            if !selection_aware {
+                self.state.clear_selection();
+            }
             self.launch_custom_command(binding, super::navigate::ActionContext::Direct);
+            if selection_aware {
+                self.state.clear_selection();
+            }
             return None;
         }
 
         if let Some(action) = super::terminal_direct_indexed_navigation_action(&self.state, &key) {
+            self.state.clear_selection();
             debug!(
                 code = ?key_event.code,
                 modifiers = ?key_event.modifiers,
@@ -121,10 +134,12 @@ impl App {
         }
 
         if self.state.is_prefix_key(&key) {
+            self.state.clear_selection_highlight();
             self.state.mode = Mode::Prefix;
             return None;
         }
 
+        self.state.clear_selection();
         if is_modifier_only_key(&key_event.code) {
             debug!(
                 code = ?key_event.code,
@@ -379,8 +394,12 @@ impl App {
     ) -> Option<TerminalInputTarget> {
         match self.prepare_popup_key_forward(key.clone()) {
             PreparedPopupInput::NotOpen => {}
-            PreparedPopupInput::Consumed => return None,
+            PreparedPopupInput::Consumed => {
+                self.state.selection_snapshot = None;
+                return None;
+            }
             PreparedPopupInput::Bytes { target, bytes } => {
+                self.state.selection_snapshot = None;
                 let Some(runtime) = self.popup_runtime() else {
                     self.close_popup_pane();
                     return None;
@@ -654,6 +673,7 @@ mod tests {
         app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), end_col, row));
 
         assert!(app.state.selection.is_none());
+        assert!(app.state.selection_snapshot.is_some());
     }
 
     #[tokio::test]
@@ -676,6 +696,13 @@ mod tests {
         app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), end_col, row));
         assert!(app.last_pane_click.is_none());
         assert_eq!(clipboard_write_content(&mut app), b"alpha");
+        assert_eq!(
+            app.state
+                .selection_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.text.as_str()),
+            Some("alpha")
+        );
 
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
@@ -684,7 +711,32 @@ mod tests {
         ));
 
         assert!(app.last_pane_click.is_some());
+        assert!(app.state.selection_snapshot.is_none());
         assert!(app.event_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn right_click_clears_copied_selection_snapshot() {
+        let (mut app, info) = app_with_screen_bytes(b"alpha beta");
+        let row = info.inner_rect.y;
+        let start_col = info.inner_rect.x;
+        let end_col = info.inner_rect.x + 4;
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            start_col,
+            row,
+        ));
+        app.handle_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), end_col, row));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), end_col, row));
+        assert!(app.state.selection_snapshot.is_some());
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            start_col,
+            row,
+        ));
+
+        assert!(app.state.selection_snapshot.is_none());
     }
 
     #[tokio::test]
@@ -734,6 +786,13 @@ mod tests {
             .selection
             .as_ref()
             .is_some_and(crate::selection::Selection::is_finalized));
+        assert_eq!(
+            app.state
+                .selection_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.text.as_str()),
+            Some("alpha")
+        );
         assert!(app.state.selection_autoscroll.is_none());
         assert!(app.selection_autoscroll_deadline.is_none());
         assert!(app.selection_highlight_clear_deadline.is_none());
@@ -1306,6 +1365,13 @@ mod tests {
             .expect("highlight clear deadline");
         assert!(app.handle_scheduled_tasks(deadline + std::time::Duration::from_millis(1), false));
         assert!(app.state.selection.is_none());
+        assert_eq!(
+            app.state
+                .selection_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.text.as_str()),
+            Some("copied")
+        );
     }
 
     #[tokio::test]

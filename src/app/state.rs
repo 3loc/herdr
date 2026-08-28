@@ -26,8 +26,15 @@ pub(crate) struct PopupPaneState {
 }
 
 // ---------------------------------------------------------------------------
-// Selection autoscroll types
+// Selection types
 // ---------------------------------------------------------------------------
+
+/// Stable text for server-side plugin context after the visual selection is cleared.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SelectionSnapshot {
+    pub pane_id: PaneId,
+    pub text: String,
+}
 
 /// Direction of automatic scrolling during text selection drag.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1498,6 +1505,7 @@ pub struct AppState {
         std::collections::HashMap<crate::app::InputSourceId, WorkspacePressState>,
     pub(crate) tab_presses: std::collections::HashMap<crate::app::InputSourceId, TabPressState>,
     pub selection: Option<Selection>,
+    pub(crate) selection_snapshot: Option<SelectionSnapshot>,
     pub selection_autoscroll: Option<SelectionAutoscroll>,
     pub context_menu: Option<ContextMenuState>,
     // Notifications
@@ -1896,6 +1904,7 @@ impl AppState {
             workspace_presses: std::collections::HashMap::new(),
             tab_presses: std::collections::HashMap::new(),
             selection: None,
+            selection_snapshot: None,
             selection_autoscroll: None,
             context_menu: None,
             update_available: None,
@@ -2074,6 +2083,10 @@ impl AppState {
             assert!(
                 self.selection.is_none(),
                 "empty app state must not keep text selection"
+            );
+            assert!(
+                self.selection_snapshot.is_none(),
+                "empty app state must not keep selection snapshot"
             );
             assert!(
                 self.selection_autoscroll.is_none(),
@@ -2256,6 +2269,9 @@ impl AppState {
                 self.selection_autoscroll.is_none(),
                 "selection autoscroll must not remain without an active text selection"
             );
+        }
+        if let Some(snapshot) = &self.selection_snapshot {
+            assert_live_pane(snapshot.pane_id, "selection snapshot");
         }
         if let Some(gesture) = &self.right_click_passthrough {
             assert_live_pane(gesture.pane_info.id, "right-click passthrough gesture");

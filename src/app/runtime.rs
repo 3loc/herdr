@@ -412,7 +412,7 @@ impl App {
             .as_ref()
             .is_some_and(|selection| !selection.is_in_progress())
         {
-            self.state.clear_selection();
+            self.state.clear_selection_highlight();
             return true;
         }
         false

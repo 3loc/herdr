@@ -2419,25 +2419,146 @@ command = ["sh", "-c", "printf '%s\n%s\n%s' \"$HERDR_PLUGIN_ROOT\" \"$HERDR_PLUG
     }
 
     #[tokio::test]
-    async fn current_plugin_context_includes_selected_text_for_focused_pane() {
+    async fn current_plugin_context_keeps_mouse_selection_after_auto_copy() {
         let mut app = test_app();
         let workspace = crate::workspace::Workspace::test_new("plugin-selection");
         let pane_id = workspace.tabs[0].root_pane;
         let terminal_id = workspace.terminal_id(pane_id).cloned().unwrap();
+        let pane_infos = workspace.tabs[0]
+            .layout
+            .panes(ratatui::layout::Rect::new(26, 2, 80, 18));
+        let info = pane_infos[0].clone();
         app.state.workspaces = vec![workspace];
         app.state.ensure_test_terminals();
         app.state.active = Some(0);
         app.state.selected = 0;
         app.state.mode = crate::app::Mode::Terminal;
+        app.state.view.pane_infos = pane_infos;
         app.terminal_runtimes.insert(
             terminal_id,
-            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"hello plugin\n"),
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(
+                info.inner_rect.width,
+                info.inner_rect.height,
+                b"hello plugin\n",
+            ),
+        );
+        let mouse = |kind, column| crossterm::event::MouseEvent {
+            kind,
+            column,
+            row: info.inner_rect.y,
+            modifiers: crossterm::event::KeyModifiers::empty(),
+        };
+        app.handle_mouse(mouse(
+            crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            info.inner_rect.x,
+        ));
+        app.handle_mouse(mouse(
+            crossterm::event::MouseEventKind::Drag(crossterm::event::MouseButton::Left),
+            info.inner_rect.x + 4,
+        ));
+
+        let context = app.current_plugin_context("selection-drag-test");
+        assert_eq!(context.selected_text.as_deref(), Some("hello"));
+
+        app.handle_mouse(mouse(
+            crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left),
+            info.inner_rect.x + 4,
+        ));
+        assert!(app.state.selection.is_none());
+        let context = app.current_plugin_context("selection-release-test");
+        assert_eq!(context.selected_text.as_deref(), Some("hello"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn prefix_plugin_action_reads_copy_mode_selection_before_exit() {
+        let root = unique_temp_path("plugin-prefix-selection");
+        let output = root.join("context.json");
+        write_manifest_content(
+            &root,
+            &format!(
+                r#"
+id = "example.prefix-selection"
+name = "Prefix selection"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+platforms = ["linux", "macos"]
+
+[[actions]]
+id = "capture"
+title = "Capture selection"
+contexts = ["selection"]
+command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_CONTEXT_JSON\" > '{}'"]
+"#,
+                output.display()
+            ),
+        );
+        let plugin = load_plugin_manifest(&root.display().to_string(), true).unwrap();
+        let plugin_config_dir = super::env::plugin_config_dir(&plugin.plugin_id);
+        let plugin_state_dir = super::env::plugin_state_dir(&plugin.plugin_id);
+        let mut app = test_app();
+        let workspace = crate::workspace::Workspace::test_new("plugin-prefix-selection");
+        let pane_id = workspace.tabs[0].root_pane;
+        let terminal_id = workspace.terminal_id(pane_id).cloned().unwrap();
+        let pane_infos = workspace.tabs[0]
+            .layout
+            .panes(ratatui::layout::Rect::new(26, 2, 80, 18));
+        let info = pane_infos[0].clone();
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = crate::app::Mode::Copy;
+        app.state.view.pane_infos = pane_infos;
+        app.terminal_runtimes.insert(
+            terminal_id,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(
+                info.inner_rect.width,
+                info.inner_rect.height,
+                b"hello plugin\n",
+            ),
         );
         app.state.selection = Some(crate::selection::Selection::range(pane_id, 0, 0, 4, None));
+        app.state.copy_mode = Some(crate::app::state::CopyModeState {
+            pane_id,
+            cursor_row: 0,
+            cursor_col: 0,
+            entry_offset_from_bottom: 0,
+            selection: None,
+            search: crate::app::state::CopyModeSearchState::default(),
+        });
+        app.state.keybinds.custom_commands = vec![crate::config::CustomCommandKeybind {
+            bindings: crate::config::ActionKeybinds::prefix("m"),
+            label: "capture".to_string(),
+            command: "capture".to_string(),
+            action: crate::config::CustomCommandAction::PluginAction,
+            description: None,
+            width: None,
+            height: None,
+        }];
+        app.state
+            .installed_plugins
+            .insert(plugin.plugin_id.clone(), plugin);
 
-        let context = app.current_plugin_context("selection-test");
+        app.handle_copy_mode_key(crate::input::TerminalKey::new(
+            app.state.prefix_code,
+            app.state.prefix_mods,
+        ));
+        assert_eq!(app.state.mode, crate::app::Mode::Prefix);
+        app.handle_prefix_key(crate::input::TerminalKey::new(
+            crossterm::event::KeyCode::Char('m'),
+            crossterm::event::KeyModifiers::empty(),
+        ));
 
+        let context: PluginInvocationContext =
+            serde_json::from_str(&read_capture_when_ready(&output, || {})).unwrap();
         assert_eq!(context.selected_text.as_deref(), Some("hello"));
+        assert!(app.state.copy_mode.is_none());
+        assert!(app.state.selection_snapshot.is_none());
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(plugin_config_dir);
+        let _ = std::fs::remove_dir_all(plugin_state_dir);
     }
 
     #[cfg(unix)]
