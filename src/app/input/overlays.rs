@@ -609,12 +609,14 @@ impl AppState {
         }
     }
 
+    /// Outer rect of the keybind sheet.
     pub(super) fn keybind_help_popup_rect(&self) -> Rect {
-        crate::ui::centered_popup_rect(self.screen_rect(), 76, 22).unwrap_or_default()
+        crate::ui::centered_popup_rect(self.screen_rect(), u16::MAX, u16::MAX).unwrap_or_default()
     }
 
     fn keybind_help_modal_inner(&self) -> Option<Rect> {
-        self.onboarding_modal_inner(76, 22)
+        // Keep this size aligned with the keybind sheet renderer.
+        self.onboarding_modal_inner(u16::MAX, u16::MAX)
     }
 
     fn keybind_help_close_button_at(&self, col: u16, row: u16) -> bool {
@@ -643,11 +645,12 @@ impl AppState {
     fn keybind_help_scroll_metrics(&self) -> Option<crate::pane::ScrollMetrics> {
         let body = self.keybind_help_body_rect()?;
         let viewport_rows = body.height.max(1) as usize;
-        let wrap_width = body.width.max(1) as usize;
-        let total_rows = crate::ui::keybind_help_lines(self)
-            .into_iter()
-            .map(|(width, _)| width.max(1).div_ceil(wrap_width))
-            .sum::<usize>();
+        // Scroll by the tallest column and reserve the scrollbar column.
+        let total_rows = crate::ui::keybind_help_columns(self, body.width.saturating_sub(1))
+            .iter()
+            .map(Vec::len)
+            .max()
+            .unwrap_or(0);
         let max_offset_from_bottom = total_rows.saturating_sub(viewport_rows);
         Some(crate::pane::ScrollMetrics {
             offset_from_bottom: max_offset_from_bottom

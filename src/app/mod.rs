@@ -17,6 +17,7 @@ mod creation;
 mod git_refresh;
 mod ids;
 mod input;
+mod note_queue;
 pub(crate) mod pane_graphics;
 mod popup;
 mod runtime;
@@ -557,7 +558,10 @@ impl App {
             workspaces,
             active,
             previous_pane_focus: None,
+            note_target: None,
+            notes_list: None,
             selected,
+            sidebar_selection: None,
             mode,
             should_quit: false,
             detach_exits: no_session,
@@ -1921,8 +1925,11 @@ impl App {
             Mode::Copy => {
                 self.handle_copy_mode_key(key);
             }
-            Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane => {
+            Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane | Mode::NoteCapture => {
                 self.handle_rename_key_via_api(key_event);
+            }
+            Mode::NotesList => {
+                self.handle_notes_list_key_via_api(key_event);
             }
             Mode::NewLinkedWorktree => {
                 self.handle_worktree_create_key(key_event);
@@ -2238,6 +2245,7 @@ mod tests {
             Mode::RenameWorkspace,
             Mode::RenameTab,
             Mode::RenamePane,
+            Mode::NoteCapture,
             Mode::NewLinkedWorktree,
             Mode::OpenExistingWorktree,
             Mode::Settings,
@@ -4296,6 +4304,86 @@ mod tests {
 
         assert_eq!(response["result"]["type"], "ok");
         assert!(app.state.should_quit);
+    }
+
+    #[test]
+    fn pane_notes_api_appends_reads_removes_and_clears() {
+        let mut app = test_app();
+        let workspace = Workspace::test_new("api-pane-notes");
+        let pane = workspace.tabs[0].root_pane;
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+
+        let pane_id = app.pane_info(0, pane).unwrap().pane_id;
+        let add = |app: &mut App, text: &str| {
+            let response = app.handle_api_request(crate::api::schema::Request {
+                id: "req_note_add".into(),
+                method: crate::api::schema::Method::PaneNoteAdd(
+                    crate::api::schema::PaneNoteAddParams {
+                        pane_id: app.pane_info(0, pane).unwrap().pane_id,
+                        text: text.into(),
+                    },
+                ),
+            });
+            serde_json::from_str::<serde_json::Value>(&response).unwrap()
+        };
+
+        let response = add(&mut app, "check the mailer");
+        assert_eq!(response["result"]["type"], "pane_notes");
+        assert_eq!(response["result"]["notes"]["notes"][0], "check the mailer");
+
+        add(&mut app, "and the purge fence");
+        let response = add(&mut app, "   ");
+        assert_eq!(response["error"]["code"], "invalid_note");
+        let response = add(
+            &mut app,
+            &"x".repeat(crate::terminal::MAX_PANE_NOTE_BYTES + 1),
+        );
+        assert_eq!(response["error"]["code"], "note_too_large");
+
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "req_note_list".into(),
+            method: crate::api::schema::Method::PaneNotesList(crate::api::schema::PaneTarget {
+                pane_id: pane_id.clone(),
+            }),
+        });
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(
+            response["result"]["notes"]["notes"][1],
+            "and the purge fence"
+        );
+
+        // Notes also ride along on pane_info, so `pane get` needs no extra call.
+        assert_eq!(app.pane_info(0, pane).unwrap().notes.len(), 2);
+
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "req_note_remove".into(),
+            method: crate::api::schema::Method::PaneNoteRemove(
+                crate::api::schema::PaneNoteRemoveParams {
+                    pane_id: pane_id.clone(),
+                    index: 0,
+                },
+            ),
+        });
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(
+            response["result"]["notes"]["notes"][0],
+            "and the purge fence"
+        );
+
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "req_note_clear".into(),
+            method: crate::api::schema::Method::PaneNotesClear(crate::api::schema::PaneTarget {
+                pane_id,
+            }),
+        });
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert!(response["result"]["notes"]["notes"]
+            .as_array()
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

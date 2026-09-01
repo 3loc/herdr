@@ -172,6 +172,10 @@ herdr pane focus --direction left|right|up|down [--pane ID|--current]
 herdr pane resize --direction left|right|up|down [--amount FLOAT] [--pane ID|--current]
 herdr pane zoom [<pane_id>|--pane ID|--current] [--toggle|--on|--off]
 herdr pane rename <pane_id> <label>|--clear
+herdr pane notes list <pane_id>|--current
+herdr pane notes add <pane_id>|--current <text>
+herdr pane notes remove <pane_id>|--current <index>
+herdr pane notes clear <pane_id>|--current
 herdr pane split [<pane_id>|--pane ID|--current] --direction right|down [--ratio FLOAT] [--cwd PATH] [--env KEY=VALUE] [--focus] [--no-focus]
 herdr pane swap --direction left|right|up|down [--pane ID|--current]
 herdr pane swap --source-pane ID --target-pane ID
@@ -192,6 +196,8 @@ herdr pane read <pane_id> [--source visible|recent|recent-unwrapped|detection] [
 herdr pane read <pane_id> --source visible --ansi
 herdr pane read <pane_id> --source recent-unwrapped --lines 120
 ```
+
+窗格备注是用户在智能体忙碌时添加的简短指示。Herdr 会在每次完成对话后发送队列中的一条备注。可以使用 `pane notes list` 直接查看备注,它们也会出现在 `pane get` 和 `pane list` 的 `notes` 字段中。每个窗格最多保存 100 条备注,每条不超过 4 KiB。
 
 `pane read` 直接打印 UTF-8 终端文本。默认去除 ANSI 转义;来源包含样式时,使用 `--format ansi` 或 `--ansi` 保留。`detection` 来源始终是纯文本。对 recent 类来源,`--lines N` 会在可选的取消折行之前选择最后 N 个已渲染终端行;省略时默认读取 80 行。对 `visible` 和 `detection`,省略 `--lines` 会返回完整快照,指定时保留按换行分隔的最后 N 行。`agent read` 使用相同的输出和行数行为。
 

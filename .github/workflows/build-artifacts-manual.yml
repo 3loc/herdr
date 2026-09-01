@@ -31,6 +31,11 @@ on:
         options:
           - 'false'
           - 'true'
+      publish_release:
+        description: publish all-platform artifacts as the latest 3LOC release
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -39,6 +44,9 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   RUST_TOOLCHAIN_VERSION: 1.96.1
+  HERDR_BUILD_CHANNEL: 3loc
+  HERDR_BUILD_ID: ${{ github.sha }}
+  HERDR_STABLE_UPDATE_MANIFEST_URL: https://github.com/${{ github.repository }}/releases/latest/download/latest.json
 
 jobs:
   build-linux:
@@ -90,7 +98,7 @@ jobs:
 
       - name: Set Linux aarch64 linker
         if: matrix.target == 'aarch64-unknown-linux-musl'
-        run: echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+        run: echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
 
       - name: Remove Zig caches
         run: rm -rf .zig-cache vendor/libghostty-vt/.zig-cache vendor/libghostty-vt/zig-out
@@ -141,6 +149,7 @@ jobs:
     env:
       LIBGHOSTTY_VT_OPTIMIZE: ${{ inputs.libghostty_optimize }}
       LIBGHOSTTY_VT_SIMD: ${{ inputs.libghostty_simd }}
+      RUSTFLAGS: -C link-arg=-Wl,-ld_classic
 
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -154,12 +163,29 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install Zig
+        if: runner.os != 'macOS'
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.15.2
 
+      - name: Restore Homebrew Zig cache
+        if: runner.os == 'macOS'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/Library/Caches/Homebrew/downloads
+          key: homebrew-zig-0.15-${{ runner.os }}-${{ runner.arch }}
+          restore-keys: |
+            homebrew-zig-0.15-${{ runner.os }}-
+
+      - name: Install patched Zig on macOS
+        if: runner.os == 'macOS'
+        run: |
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install zig@0.15
+          echo "$(brew --prefix zig@0.15)/bin" >> "$GITHUB_PATH"
+          "$(brew --prefix zig@0.15)/bin/zig" version
+
       - name: Install macOS build tools
-        run: brew install cmake ninja
+        run: HOMEBREW_NO_AUTO_UPDATE=1 brew install cmake ninja
 
       - name: Remove Zig caches
         run: rm -rf .zig-cache vendor/libghostty-vt/.zig-cache vendor/libghostty-vt/zig-out
@@ -247,3 +273,63 @@ jobs:
             herdr-windows-x86_64.zip
             BUILD_INFO.txt
           retention-days: 7
+
+  publish-release:
+    if: ${{ github.repository == '3loc/herdr' && inputs.publish_release && inputs.build_group == 'all' }}
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: herdr-*-${{ inputs.libghostty_optimize }}-simd-${{ inputs.libghostty_simd }}
+          path: release
+          merge-multiple: true
+
+      - name: Prepare release metadata
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          short_sha="${GITHUB_SHA:0:12}"
+          tag="3loc-v${version}-${short_sha}"
+          python3 scripts/create_3loc_release.py \
+            --tag "$tag" \
+            --repository "$GITHUB_REPOSITORY" \
+            --artifacts release \
+            --output release/latest.json
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "3LOC Herdr ${GITHUB_SHA:0:12}" \
+            --notes "3LOC fork build from ${GITHUB_SHA}." \
+            --latest \
+            release/herdr-linux-x86_64 \
+            release/herdr-linux-x86_64.sha256 \
+            release/herdr-linux-aarch64 \
+            release/herdr-linux-aarch64.sha256 \
+            release/herdr-macos-x86_64 \
+            release/herdr-macos-x86_64.sha256 \
+            release/herdr-macos-aarch64 \
+            release/herdr-macos-aarch64.sha256 \
+            release/herdr-windows-x86_64.zip \
+            release/herdr-windows-x86_64.zip.sha256 \
+            release/latest.json

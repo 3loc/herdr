@@ -526,6 +526,7 @@ fn render_pane_borders(
     }
 
     render_pane_border_titles(app, ws, pane_infos, frame);
+    render_pane_note_queues(app, ws, pane_infos, frame);
 }
 
 fn add_split_border_cells(
@@ -648,6 +649,84 @@ fn line_touches_pane(x: u16, y: u16, info: &PaneInfo, pane_gaps: bool) -> bool {
         || (in_rows && x == shared_right)
         || (in_cols && y == shared_bottom)
         || (x == shared_right && y == shared_bottom)
+}
+
+const NOTE_QUEUE_MAX_WIDTH: u16 = 34;
+const NOTE_QUEUE_MAX_ROWS: usize = 4;
+
+fn render_pane_note_queues(
+    app: &AppState,
+    ws: &crate::workspace::Workspace,
+    pane_infos: &[PaneInfo],
+    frame: &mut Frame,
+) {
+    for info in pane_infos {
+        let Some(notes) = ws
+            .pane_state(info.id)
+            .and_then(|pane| app.terminals.get(&pane.attached_terminal_id))
+            .map(|terminal| &terminal.notes)
+            .filter(|notes| !notes.is_empty())
+        else {
+            continue;
+        };
+
+        let available = info.rect.width.saturating_sub(4).min(info.rect.width / 2);
+        let width = NOTE_QUEUE_MAX_WIDTH.min(available);
+        if width < 8 {
+            continue;
+        }
+
+        let shown = notes.len().min(NOTE_QUEUE_MAX_ROWS);
+        let overflow = notes.len() - shown;
+        let rows = 1 + shown + usize::from(overflow > 0);
+        let height = u16::try_from(rows.saturating_add(2)).unwrap_or(u16::MAX);
+        if info.rect.height <= height {
+            continue;
+        }
+
+        let x = info
+            .rect
+            .x
+            .saturating_add(info.rect.width)
+            .saturating_sub(width)
+            .saturating_sub(1);
+        let y = info.rect.y.saturating_add(1);
+        let area = Rect::new(x, y, width, height);
+
+        let text_width = width.saturating_sub(4) as usize;
+        let mut lines = vec![Line::from(Span::styled(
+            format!(" queued · {} ", notes.len()),
+            Style::default()
+                .fg(panel_contrast_fg(&app.palette))
+                .bg(app.palette.accent)
+                .add_modifier(Modifier::BOLD),
+        ))];
+        for note in notes.iter().take(shown) {
+            lines.push(Line::from(Span::styled(
+                format!(" {} ", truncate_end(note, text_width)),
+                Style::default()
+                    .fg(app.palette.text)
+                    .bg(app.palette.surface0),
+            )));
+        }
+        if overflow > 0 {
+            lines.push(Line::from(Span::styled(
+                format!(" +{overflow} more "),
+                Style::default()
+                    .fg(app.palette.overlay0)
+                    .bg(app.palette.surface0),
+            )));
+        }
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(app.palette.accent))
+            .style(Style::default().bg(app.palette.surface0));
+        let inner = block.inner(area);
+        frame.render_widget(Clear, area);
+        frame.render_widget(block, area);
+        frame.render_widget(Paragraph::new(lines), inner);
+    }
 }
 
 fn render_pane_border_titles(

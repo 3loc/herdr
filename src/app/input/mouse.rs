@@ -391,7 +391,7 @@ impl AppState {
 
                 if matches!(
                     self.mode,
-                    Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane
+                    Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane | Mode::NoteCapture
                 ) {
                     let action = self
                         .rename_modal_inner()
@@ -1127,6 +1127,9 @@ impl AppState {
                         .is_some();
                     let right_click_passthrough =
                         pane_state.is_some_and(|pane| pane.right_click_passthrough);
+                    let note_count = pane_state
+                        .and_then(|pane| self.terminals.get(&pane.attached_terminal_id))
+                        .map_or(0, |terminal| terminal.notes.len());
                     self.context_menu = Some(ContextMenuState {
                         kind: ContextMenuKind::Pane {
                             ws_idx,
@@ -1134,6 +1137,7 @@ impl AppState {
                             pane_id: info.id,
                             source_pane_id,
                             has_manual_label,
+                            note_count,
                             right_click_passthrough,
                         },
                         x: mouse.column,
@@ -3667,6 +3671,7 @@ mod tests {
                 pane_id,
                 source_pane_id: None,
                 has_manual_label: false,
+                note_count: 0,
                 right_click_passthrough: false,
             },
             x: 2,

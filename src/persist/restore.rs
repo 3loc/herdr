@@ -491,6 +491,7 @@ fn restore_tab(
         };
 
         let saved_label = saved_pane.and_then(|p| p.label.clone());
+        let saved_notes = saved_pane.map(|p| p.notes.clone()).unwrap_or_default();
         let saved_agent_name = saved_pane.and_then(|p| p.agent_name.clone());
         let saved_managed_agent = saved_pane
             .and_then(|pane| pane.managed_agent_kind.as_deref())
@@ -540,6 +541,7 @@ fn restore_tab(
             if let Some(label) = saved_label {
                 terminal.set_manual_label(label);
             }
+            terminal.restore_notes(saved_notes);
             if let Some(session) = restored_agent_session {
                 terminal.set_persisted_agent_session(session);
             }
@@ -637,6 +639,7 @@ fn restore_tab(
                 if let Some(label) = saved_label {
                     terminal.set_manual_label(label);
                 }
+                terminal.restore_notes(saved_notes);
                 if let Some(session) = restored_agent_session {
                     terminal.set_persisted_agent_session(session);
                 }
@@ -1189,6 +1192,7 @@ mod tests {
                         super::super::snapshot::PaneSnapshot {
                             cwd,
                             label: Some("reviewer".into()),
+                            notes: Vec::new(),
                             agent_name: Some("reviewer".into()),
                             managed_agent_kind: Some("opencode".into()),
                             agent_session: Some(super::super::snapshot::PaneAgentSessionSnapshot {
@@ -1275,6 +1279,7 @@ mod tests {
                             super::super::snapshot::PaneSnapshot {
                                 cwd: cwd.clone(),
                                 label: None,
+                                notes: Vec::new(),
                                 agent_name: None,
                                 managed_agent_kind: None,
                                 agent_session: None,
@@ -1286,6 +1291,7 @@ mod tests {
                             super::super::snapshot::PaneSnapshot {
                                 cwd: cwd.clone(),
                                 label: None,
+                                notes: Vec::new(),
                                 agent_name: None,
                                 managed_agent_kind: None,
                                 agent_session: None,
@@ -1339,6 +1345,7 @@ mod tests {
                 super::super::snapshot::PaneSnapshot {
                     cwd: cwd.clone(),
                     label: None,
+                    notes: Vec::new(),
                     agent_name: None,
                     managed_agent_kind: None,
                     agent_session: None,
@@ -1349,6 +1356,7 @@ mod tests {
         let final_pane = super::super::snapshot::PaneSnapshot {
             cwd: cwd.clone(),
             label: Some("planner".into()),
+            notes: Vec::new(),
             agent_name: Some("planner".into()),
             managed_agent_kind: None,
             agent_session: Some(super::super::snapshot::PaneAgentSessionSnapshot {
@@ -1500,6 +1508,7 @@ mod tests {
                         super::super::snapshot::PaneSnapshot {
                             cwd,
                             label: None,
+                            notes: Vec::new(),
                             agent_name: None,
                             managed_agent_kind: None,
                             agent_session: Some(super::super::snapshot::PaneAgentSessionSnapshot {
@@ -1666,6 +1675,7 @@ mod tests {
             super::super::snapshot::PaneSnapshot {
                 cwd: cwd.clone(),
                 label: None,
+                notes: Vec::new(),
                 agent_name: None,
                 managed_agent_kind: None,
                 agent_session: None,

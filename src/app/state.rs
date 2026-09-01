@@ -896,6 +896,8 @@ pub enum Mode {
     RenameWorkspace,
     RenameTab,
     RenamePane,
+    NoteCapture,
+    NotesList,
     NewLinkedWorktree,
     OpenExistingWorktree,
     ConfirmRemoveWorktree,
@@ -1275,6 +1277,7 @@ pub enum ContextMenuKind {
         pane_id: PaneId,
         source_pane_id: Option<PaneId>,
         has_manual_label: bool,
+        note_count: usize,
         right_click_passthrough: bool,
     },
 }
@@ -1316,10 +1319,11 @@ impl ContextMenuState {
             ContextMenuKind::Pane {
                 source_pane_id,
                 has_manual_label,
+                note_count,
                 right_click_passthrough,
                 ..
             } => {
-                let mut items = vec!["Rename pane"];
+                let mut items = vec![notes_menu_label(note_count)];
                 if has_manual_label {
                     items.push("Clear pane name");
                 }
@@ -1337,6 +1341,38 @@ impl ContextMenuState {
             }
         }
     }
+}
+
+/// Context-menu label for a pane's note count.
+pub fn notes_menu_label(note_count: usize) -> &'static str {
+    match note_count {
+        0 => "Notes",
+        1 => "Notes (1)",
+        2 => "Notes (2)",
+        3 => "Notes (3)",
+        4 => "Notes (4)",
+        5 => "Notes (5)",
+        6 => "Notes (6)",
+        7 => "Notes (7)",
+        8 => "Notes (8)",
+        9 => "Notes (9)",
+        _ => "Notes (9+)",
+    }
+}
+
+pub fn is_notes_menu_label(item: &str) -> bool {
+    item.starts_with("Notes")
+}
+
+/// Notes browser state for one pane.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotesListState {
+    pub ws_idx: usize,
+    pub pane_id: PaneId,
+    pub terminal_id: crate::terminal::TerminalId,
+    pub pane_label: String,
+    pub notes: Vec<String>,
+    pub list: MenuListState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1425,6 +1461,13 @@ pub(crate) struct PaneFocusTarget {
     pub pane_id: PaneId,
 }
 
+/// Transient keyboard cursor for the desktop sidebar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SidebarSelection {
+    Workspace(usize),
+    Agent(usize),
+}
+
 /// All application state — pure data, no channels or async runtime.
 /// Testable without PTYs or a tokio runtime.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1444,6 +1487,7 @@ pub struct AppState {
     pub active: Option<usize>,
     pub(crate) previous_pane_focus: Option<PaneFocusTarget>,
     pub selected: usize,
+    pub(crate) sidebar_selection: Option<SidebarSelection>,
     pub mode: Mode,
     /// Stable workspace identity captured when the close confirmation opens.
     pub(crate) confirm_close_workspace_id: Option<String>,
@@ -1473,6 +1517,7 @@ pub struct AppState {
     pub requested_new_tab_name: Option<String>,
     pub pending_workspace_create_cwd: Option<std::path::PathBuf>,
     pub rename_pane_target: Option<PaneId>,
+    pub note_target: Option<PaneId>,
     pub worktree_create: Option<WorktreeCreateState>,
     pub worktree_open: Option<WorktreeOpenState>,
     pub worktree_remove: Option<WorktreeRemoveState>,
@@ -1500,6 +1545,7 @@ pub struct AppState {
     pub selection: Option<Selection>,
     pub selection_autoscroll: Option<SelectionAutoscroll>,
     pub context_menu: Option<ContextMenuState>,
+    pub notes_list: Option<NotesListState>,
     // Notifications
     pub update_available: Option<String>,
     pub update_install_command: String,
@@ -1837,6 +1883,7 @@ impl AppState {
             active: None,
             previous_pane_focus: None,
             selected: 0,
+            sidebar_selection: None,
             mode: Mode::Navigate,
             confirm_close_workspace_id: None,
             should_quit: false,
@@ -1858,6 +1905,7 @@ impl AppState {
             requested_new_tab_name: None,
             pending_workspace_create_cwd: None,
             rename_pane_target: None,
+            note_target: None,
             worktree_create: None,
             worktree_open: None,
             worktree_remove: None,
@@ -1898,6 +1946,7 @@ impl AppState {
             selection: None,
             selection_autoscroll: None,
             context_menu: None,
+            notes_list: None,
             update_available: None,
             update_install_command: "herdr update".into(),
             latest_release_notes_available: false,

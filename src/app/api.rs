@@ -334,6 +334,8 @@ impl App {
             self.refresh_new_herdr_toast_context_for_update(update, &previous_toast);
             self.emit_pane_state_update(update);
         }
+        // An agent that just finished a turn is ready for the next queued thought.
+        self.flush_note_queues(&pane_updates);
         self.sync_agent_metadata_deadline();
         if let Some((
             overlay,
@@ -1105,6 +1107,16 @@ impl App {
             Method::PaneFocus(target) => return self.handle_pane_focus(request.id, target),
             Method::PaneInputSet(params) => return self.handle_pane_input_set(request.id, params),
             Method::PaneRename(params) => return self.handle_pane_rename(request.id, params),
+            Method::PaneNotesList(target) => {
+                return self.handle_pane_notes_list(request.id, target)
+            }
+            Method::PaneNoteAdd(params) => return self.handle_pane_note_add(request.id, params),
+            Method::PaneNoteRemove(params) => {
+                return self.handle_pane_note_remove(request.id, params);
+            }
+            Method::PaneNotesClear(target) => {
+                return self.handle_pane_notes_clear(request.id, target);
+            }
             Method::PaneRead(params) => return self.handle_pane_read(request.id, params),
             Method::PaneGraphicsSet(params) => {
                 return self.handle_pane_graphics_set(request.id, params);

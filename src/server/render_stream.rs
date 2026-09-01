@@ -546,6 +546,15 @@ mod render_scale_benchmark {
         app_with(vec![workspace])
     }
 
+    fn app_with_noted_active_panes(pane_count: usize) -> AppState {
+        let mut app = app_with_active_panes(pane_count);
+        app.ensure_test_terminals();
+        for terminal in app.terminals.values_mut() {
+            terminal.add_note("review the pending change".into());
+        }
+        app
+    }
+
     fn app_with(workspaces: Vec<Workspace>) -> AppState {
         let mut app = AppState::test_new();
         app.mode = Mode::Terminal;
@@ -634,6 +643,10 @@ mod render_scale_benchmark {
         print_profiles(
             "active panes (one workspace)",
             profile_cardinalities(app_with_active_panes),
+        );
+        print_profiles(
+            "active panes with notes (one workspace)",
+            profile_cardinalities(app_with_noted_active_panes),
         );
     }
 }

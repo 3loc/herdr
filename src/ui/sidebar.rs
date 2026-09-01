@@ -12,7 +12,7 @@ use self::tokens::{ResolvedToken, ResolvedTokenKind, SpaceTokenContext};
 use super::scrollbar::{render_scrollbar, should_show_scrollbar};
 use super::status::{state_icon, state_label, state_label_color};
 use super::text::{display_width, display_width_u16, truncate_end};
-use crate::app::state::{AgentPanelSort, Palette};
+use crate::app::state::{AgentPanelSort, Palette, SidebarSelection};
 use crate::app::{AppState, Mode};
 use crate::detect::AgentState;
 use crate::terminal::TerminalRuntimeRegistry;
@@ -748,12 +748,12 @@ pub(crate) fn collapsed_sidebar_sections(area: Rect) -> (Rect, Option<u16>, Rect
     (ws_area, Some(divider_y), detail_area)
 }
 
-fn workspace_selection_background(p: &Palette, is_active: bool) -> Color {
-    if is_active && p.selection_bg == Color::Reset {
-        p.active_row_bg
-    } else {
-        p.selection_bg
+fn workspace_selection_background(p: &Palette, _is_active: bool) -> Color {
+    if p.selection_bg != Color::Reset {
+        return p.selection_bg;
     }
+
+    p.accent
 }
 
 /// Collapsed sidebar: workspace glance on top, compact agent list below.
@@ -793,7 +793,12 @@ pub(super) fn render_sidebar_collapsed(app: &AppState, frame: &mut Frame, area: 
         }
         let (agg_state, agg_seen) = ws.aggregate_state(&app.terminals);
         let (icon, icon_style) = state_icon(agg_state, agg_seen, app.status_indicators, p);
-        let is_selected = visible_idx == app.selected && is_navigating;
+        let is_selected = is_navigating
+            && match app.sidebar_selection {
+                Some(SidebarSelection::Workspace(ws_idx)) => ws_idx == visible_idx,
+                Some(SidebarSelection::Agent(_)) => false,
+                None => visible_idx == app.selected,
+            };
         let is_active = Some(visible_idx) == app.active;
         let selection_bg = workspace_selection_background(p, is_active);
         let row_style = if is_selected {
@@ -820,7 +825,14 @@ pub(super) fn render_sidebar_collapsed(app: &AppState, frame: &mut Frame, area: 
 
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(format!("{:<2}", visible_idx + 1), num_style),
+                Span::styled(
+                    if is_selected && app.sidebar_selection.is_some() {
+                        "› ".to_string()
+                    } else {
+                        format!("{:<2}", visible_idx + 1)
+                    },
+                    num_style,
+                ),
                 Span::styled(icon, icon_style),
             ])),
             Rect::new(ws_area.x, y, ws_area.width, 1),
@@ -854,24 +866,38 @@ pub(super) fn render_sidebar_collapsed(app: &AppState, frame: &mut Frame, area: 
             }
             let position = detail_idx + 1;
             let is_active = app.is_active_pane(detail.ws_idx, detail.tab_idx, detail.pane_id);
-            let position_style = if is_active {
-                Style::default().fg(p.text).bg(p.active_row_bg)
+            let is_selected = app.mode == Mode::Navigate
+                && app.sidebar_selection == Some(SidebarSelection::Agent(detail_idx));
+            let row_bg = if is_selected {
+                workspace_selection_background(p, is_active)
+            } else {
+                p.active_row_bg
+            };
+            let position_style = if is_active || is_selected {
+                Style::default().fg(p.text).bg(row_bg)
             } else {
                 Style::default().fg(p.overlay0)
             };
             let (icon, icon_style) =
                 state_icon(detail.state, detail.seen, app.status_indicators, p);
 
-            if is_active {
+            if is_active || is_selected {
                 let buf = frame.buffer_mut();
                 for x in detail_content_area.x..detail_content_area.x + detail_content_area.width {
-                    buf[(x, y)].set_style(Style::default().bg(p.active_row_bg));
+                    buf[(x, y)].set_style(Style::default().bg(row_bg));
                 }
             }
 
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
-                    Span::styled(format!("{position:<2}"), position_style),
+                    Span::styled(
+                        if is_selected {
+                            "› ".to_string()
+                        } else {
+                            format!("{position:<2}")
+                        },
+                        position_style,
+                    ),
                     Span::styled(icon, icon_style),
                 ])),
                 Rect::new(detail_content_area.x, y, detail_content_area.width, 1),
@@ -1249,7 +1275,12 @@ fn render_workspace_list(
         let ws = &app.workspaces[i];
         let row_y = card.rect.y;
         let row_height = card.rect.height;
-        let selected = i == app.selected && is_navigating;
+        let selected = is_navigating
+            && match app.sidebar_selection {
+                Some(SidebarSelection::Workspace(ws_idx)) => ws_idx == i,
+                Some(SidebarSelection::Agent(_)) => false,
+                None => i == app.selected,
+            };
         let is_active = Some(i) == app.active;
         let is_dragged = dragged_ws_idx == Some(i);
         let highlighted = selected || is_active || is_dragged;
@@ -1348,7 +1379,14 @@ fn render_workspace_list(
                     8
                 }
             } else if row_index == 0 {
-                spans.push(Span::raw(" "));
+                spans.push(Span::styled(
+                    if selected && app.sidebar_selection.is_some() {
+                        "›"
+                    } else {
+                        " "
+                    },
+                    Style::default().fg(p.accent),
+                ));
                 1
             } else {
                 spans.push(Span::raw("   "));
@@ -1501,12 +1539,19 @@ fn render_agent_detail(
         }
 
         let is_active = app.is_active_pane(detail.ws_idx, detail.tab_idx, detail.pane_id);
-        let row_style = if is_active {
-            Style::default().bg(p.active_row_bg)
+        let is_selected = app.mode == Mode::Navigate
+            && app.sidebar_selection == Some(SidebarSelection::Agent(index));
+        let row_bg = if is_selected {
+            workspace_selection_background(p, is_active)
+        } else {
+            p.active_row_bg
+        };
+        let row_style = if is_active || is_selected {
+            Style::default().bg(row_bg)
         } else {
             Style::default()
         };
-        let name_style = if is_active {
+        let name_style = if is_active || is_selected {
             Style::default().fg(p.text).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(p.subtext0).add_modifier(Modifier::BOLD)
@@ -1520,7 +1565,14 @@ fn render_agent_detail(
         let state_icon = state_icon(detail.state, detail.seen, app.status_indicators, p);
 
         for (row_index, resolved) in rows.iter().take(height as usize).enumerate() {
-            let mut spans = vec![Span::raw(if row_index == 0 { " " } else { "   " })];
+            let mut spans = vec![if row_index == 0 {
+                Span::styled(
+                    if is_selected { "›" } else { " " },
+                    Style::default().fg(p.accent),
+                )
+            } else {
+                Span::raw("   ")
+            }];
             spans.extend(resolved_token_spans(
                 resolved,
                 state_icon,
@@ -1800,6 +1852,7 @@ rows = [[{ token = "workspace", bold = false }, { token = "agent", dim = false }
         app.workspaces = vec![Workspace::test_new("one"), Workspace::test_new("two")];
         app.active = Some(0);
         app.selected = 0;
+        app.sidebar_selection = Some(SidebarSelection::Workspace(0));
         app.mode = Mode::Navigate;
         let area = Rect::new(0, 0, 26, 20);
         app.view.workspace_card_areas = compute_workspace_card_areas(&app, area);
@@ -1812,10 +1865,11 @@ rows = [[{ token = "workspace", bold = false }, { token = "agent", dim = false }
 
         assert_eq!(
             terminal.backend().buffer()[(0, active_row)].bg,
-            app.palette.active_row_bg
+            app.palette.accent
         );
 
         app.selected = 1;
+        app.sidebar_selection = Some(SidebarSelection::Workspace(1));
         terminal
             .draw(|frame| render_sidebar(&app, &TerminalRuntimeRegistry::new(), frame, area))
             .unwrap();
@@ -1825,11 +1879,12 @@ rows = [[{ token = "workspace", bold = false }, { token = "agent", dim = false }
         );
         assert_eq!(
             terminal.backend().buffer()[(0, inactive_row)].bg,
-            app.palette.selection_bg
+            app.palette.accent
         );
 
         app.palette = crate::app::state::Palette::catppuccin();
         app.selected = 0;
+        app.sidebar_selection = Some(SidebarSelection::Workspace(0));
         terminal
             .draw(|frame| render_sidebar(&app, &TerminalRuntimeRegistry::new(), frame, area))
             .unwrap();
@@ -1846,6 +1901,7 @@ rows = [[{ token = "workspace", bold = false }, { token = "agent", dim = false }
         app.workspaces = vec![Workspace::test_new("one"), Workspace::test_new("two")];
         app.active = Some(0);
         app.selected = 0;
+        app.sidebar_selection = Some(SidebarSelection::Workspace(0));
         app.mode = Mode::Navigate;
         let area = Rect::new(0, 0, 5, 8);
         let mut terminal = Terminal::new(TestBackend::new(5, 8)).unwrap();
@@ -1856,10 +1912,11 @@ rows = [[{ token = "workspace", bold = false }, { token = "agent", dim = false }
         let (workspace_area, _, _) = collapsed_sidebar_sections(area);
         assert_eq!(
             terminal.backend().buffer()[(workspace_area.x, workspace_area.y)].bg,
-            app.palette.active_row_bg
+            app.palette.accent
         );
 
         app.selected = 1;
+        app.sidebar_selection = Some(SidebarSelection::Workspace(1));
         terminal
             .draw(|frame| render_sidebar_collapsed(&app, frame, area))
             .unwrap();
@@ -1869,11 +1926,12 @@ rows = [[{ token = "workspace", bold = false }, { token = "agent", dim = false }
         );
         assert_eq!(
             terminal.backend().buffer()[(workspace_area.x, workspace_area.y + 1)].bg,
-            app.palette.selection_bg
+            app.palette.accent
         );
 
         app.palette = crate::app::state::Palette::catppuccin();
         app.selected = 0;
+        app.sidebar_selection = Some(SidebarSelection::Workspace(0));
         terminal
             .draw(|frame| render_sidebar_collapsed(&app, frame, area))
             .unwrap();
@@ -1992,6 +2050,34 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(metrics.max_offset_from_bottom, 0);
         assert_eq!(row_text(buffer, body.y, body.width), " pi");
         assert_eq!(row_text(buffer, body.y + 1, body.width), " claude");
+    }
+
+    #[test]
+    fn keyboard_selected_agent_row_uses_navigate_cursor_background() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one"), Workspace::test_new("two")];
+        app.ensure_test_terminals();
+        for workspace in &app.workspaces {
+            let pane_id = workspace.tabs[0].root_pane;
+            let terminal_id = workspace.tabs[0].panes[&pane_id]
+                .attached_terminal_id
+                .clone();
+            app.terminals.get_mut(&terminal_id).unwrap().detected_agent = Some(Agent::Claude);
+        }
+        app.sidebar_agents.rows = vec![vec![crate::config::AgentSidebarToken::Agent]];
+        app.mode = Mode::Navigate;
+        app.sidebar_selection = Some(SidebarSelection::Agent(1));
+
+        let area = Rect::new(0, 0, 20, 5);
+        let body = agent_panel_body_rect(area, false);
+        let mut terminal = Terminal::new(TestBackend::new(20, 5)).unwrap();
+        terminal
+            .draw(|frame| render_agent_detail(&app, &TerminalRuntimeRegistry::new(), frame, area))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        assert_eq!(buffer[(body.x, body.y)].bg, Color::Reset);
+        assert_eq!(buffer[(body.x, body.y + 1)].bg, app.palette.selection_bg);
     }
 
     #[test]

@@ -23,7 +23,7 @@ mod text;
 mod widgets;
 
 use self::dialogs::{
-    render_confirm_close_overlay, render_new_linked_worktree_overlay,
+    render_confirm_close_overlay, render_new_linked_worktree_overlay, render_notes_overlay,
     render_open_existing_worktree_overlay, render_remove_worktree_overlay, render_rename_overlay,
 };
 use self::keybind_help::render_keybind_help_overlay;
@@ -89,7 +89,7 @@ pub(crate) use self::{
 };
 
 pub(crate) use self::{
-    keybind_help::keybind_help_lines,
+    keybind_help::keybind_help_columns,
     mobile::{
         mobile_switcher_areas, mobile_switcher_max_scroll, mobile_switcher_target_at,
         mobile_switcher_workspace_doc_range, MobileSwitcherTarget,
@@ -446,9 +446,10 @@ pub fn render_with_runtime_registry(
             render_context_menu(app, frame);
         }
         Mode::Settings => render_settings_overlay(app, frame, frame.area()),
-        Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane => {
+        Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane | Mode::NoteCapture => {
             render_rename_overlay(app, frame, frame.area())
         }
+        Mode::NotesList => render_notes_overlay(app, frame, frame.area()),
         Mode::NewLinkedWorktree => render_new_linked_worktree_overlay(app, frame, frame.area()),
         Mode::OpenExistingWorktree => {
             render_open_existing_worktree_overlay(app, frame, frame.area())
@@ -1514,9 +1515,10 @@ mod tests {
             .iter()
             .any(|(key, label)| key == "prefix+alt+h" && label.as_ref() == "custom command"));
 
-        let rendered_help = keybind_help_lines(&app)
+        let rendered_help = keybind_help_columns(&app, 120)
             .into_iter()
-            .flat_map(|(_, line)| line.spans)
+            .flatten()
+            .flat_map(|line| line.spans)
             .map(|span| span.content.into_owned())
             .collect::<Vec<_>>()
             .join("");

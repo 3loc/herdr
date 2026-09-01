@@ -251,6 +251,27 @@ pub struct PaneRenameParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneNoteAddParams {
+    pub pane_id: String,
+    /// Note text, limited to 4 KiB after trimming.
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneNoteRemoveParams {
+    pub pane_id: String,
+    /// Zero-based index into the pane's notes, oldest first.
+    pub index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneNotes {
+    pub pane_id: String,
+    /// Notes attached to the pane, oldest first, with at most 100 entries.
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PaneSendTextParams {
     pub pane_id: String,
     pub text: String,
@@ -456,6 +477,10 @@ pub struct PaneInfo {
     pub foreground_cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// Notes attached to this pane, oldest first. Standing context an agent can
+    /// read as instructions alongside its prompt.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

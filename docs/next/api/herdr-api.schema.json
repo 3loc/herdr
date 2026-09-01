@@ -805,6 +805,13 @@
                 "null"
               ]
             },
+            "notes": {
+              "description": "Notes attached to this pane, oldest first. Standing context an agent can\nread as instructions alongside its prompt.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
             "pane_id": {
               "type": "string"
             },
@@ -2710,6 +2717,40 @@
           },
           "required": [
             "direction"
+          ],
+          "type": "object"
+        },
+        "PaneNoteAddParams": {
+          "properties": {
+            "pane_id": {
+              "type": "string"
+            },
+            "text": {
+              "description": "Note text, limited to 4 KiB after trimming.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "pane_id",
+            "text"
+          ],
+          "type": "object"
+        },
+        "PaneNoteRemoveParams": {
+          "properties": {
+            "index": {
+              "description": "Zero-based index into the pane's notes, oldest first.",
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "pane_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pane_id",
+            "index"
           ],
           "type": "object"
         },
@@ -5432,6 +5473,70 @@
         {
           "properties": {
             "method": {
+              "const": "pane.notes.list",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PaneTarget"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "pane.notes.add",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PaneNoteAddParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "pane.notes.remove",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PaneNoteRemoveParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "pane.notes.clear",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PaneTarget"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
               "const": "pane.send_text",
               "type": "string"
             },
@@ -7465,6 +7570,13 @@
                 "null"
               ]
             },
+            "notes": {
+              "description": "Notes attached to this pane, oldest first. Standing context an agent can\nread as instructions alongside its prompt.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
             "pane_id": {
               "type": "string"
             },
@@ -7773,6 +7885,25 @@
             "pane_id",
             "direction",
             "layout"
+          ],
+          "type": "object"
+        },
+        "PaneNotes": {
+          "properties": {
+            "notes": {
+              "description": "Notes attached to the pane, oldest first, with at most 100 entries.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "pane_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pane_id",
+            "notes"
           ],
           "type": "object"
         },
@@ -8754,6 +8885,22 @@
               "required": [
                 "type",
                 "workspaces"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "notes": {
+                  "$ref": "#/schemas/success_response/$defs/PaneNotes"
+                },
+                "type": {
+                  "const": "pane_notes",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "notes"
               ],
               "type": "object"
             },

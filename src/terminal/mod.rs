@@ -13,4 +13,5 @@ pub use state::{
     AgentMetadataReport, EffectivePresentation, EffectiveStateChange, TerminalState,
     TerminalStateMutation,
 };
+pub(crate) use state::{MAX_PANE_NOTES, MAX_PANE_NOTE_BYTES};
 pub(crate) use title::stripped_terminal_title;

@@ -99,6 +99,8 @@ pub struct PaneSnapshot {
     pub cwd: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -326,6 +328,9 @@ fn capture_tab(
             .get(id)
             .and_then(|pane| terminals.get(&pane.attached_terminal_id));
         let label = terminal.and_then(|terminal| terminal.manual_label.clone());
+        let notes = terminal
+            .map(|terminal| terminal.notes.clone())
+            .unwrap_or_default();
         let (agent_name, managed_agent_kind) = terminal
             .filter(|terminal| !terminal.managed_agent_launch_pending())
             .map(|terminal| {
@@ -364,6 +369,7 @@ fn capture_tab(
             PaneSnapshot {
                 cwd,
                 label,
+                notes,
                 agent_name,
                 managed_agent_kind,
                 agent_session,
@@ -644,6 +650,7 @@ mod tests {
             PaneSnapshot {
                 cwd: PathBuf::from("/home/can/Projects/herdr"),
                 label: None,
+                notes: Vec::new(),
                 agent_name: None,
                 managed_agent_kind: None,
                 agent_session: None,
@@ -655,6 +662,7 @@ mod tests {
             PaneSnapshot {
                 cwd: PathBuf::from("/home/can/Projects/website"),
                 label: Some("website".into()),
+                notes: Vec::new(),
                 agent_name: None,
                 managed_agent_kind: None,
                 agent_session: None,
@@ -1203,6 +1211,7 @@ mod tests {
             PaneSnapshot {
                 cwd: PathBuf::from("/tmp/this-directory-does-not-exist-for-herdr-test"),
                 label: None,
+                notes: Vec::new(),
                 agent_name: None,
                 managed_agent_kind: None,
                 agent_session: None,
@@ -1216,6 +1225,7 @@ mod tests {
                     .map(PathBuf::from)
                     .unwrap_or_else(|_| PathBuf::from("/tmp")),
                 label: None,
+                notes: Vec::new(),
                 agent_name: None,
                 managed_agent_kind: None,
                 agent_session: None,

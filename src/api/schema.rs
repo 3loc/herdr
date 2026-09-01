@@ -165,6 +165,14 @@ pub enum Method {
     PaneInputSet(PaneInputSetParams),
     #[serde(rename = "pane.rename")]
     PaneRename(PaneRenameParams),
+    #[serde(rename = "pane.notes.list")]
+    PaneNotesList(PaneTarget),
+    #[serde(rename = "pane.notes.add")]
+    PaneNoteAdd(PaneNoteAddParams),
+    #[serde(rename = "pane.notes.remove")]
+    PaneNoteRemove(PaneNoteRemoveParams),
+    #[serde(rename = "pane.notes.clear")]
+    PaneNotesClear(PaneTarget),
     #[serde(rename = "pane.send_text")]
     PaneSendText(PaneSendTextParams),
     #[serde(rename = "pane.send_keys")]

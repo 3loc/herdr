@@ -406,6 +406,79 @@ pub(super) fn open_rename_active_tab(state: &mut AppState, replace_on_type: bool
     }
 }
 
+/// Open the one-line note capture prompt for a pane.
+pub(super) fn open_note_capture(state: &mut AppState, pane_id: crate::layout::PaneId) {
+    let Some(ws) = state.active.and_then(|i| state.workspaces.get(i)) else {
+        return;
+    };
+    if ws.pane_state(pane_id).is_none() {
+        return;
+    }
+    state.creating_new_tab = false;
+    state.requested_new_tab_name = None;
+    state.pending_workspace_create_cwd = None;
+    state.rename_pane_target = None;
+    state.note_target = Some(pane_id);
+    state.name_input.clear();
+    state.name_input_replace_on_type = false;
+    state.mode = Mode::NoteCapture;
+}
+
+pub(super) fn open_note_capture_for_focused_pane(state: &mut AppState) {
+    if let Some(pane_id) = state
+        .active
+        .and_then(|ws_idx| state.workspaces.get(ws_idx))
+        .and_then(|ws| ws.focused_pane_id())
+    {
+        open_note_capture(state, pane_id);
+    }
+}
+
+pub(super) fn open_notes_list(
+    state: &mut AppState,
+    ws_idx: usize,
+    pane_id: crate::layout::PaneId,
+) -> bool {
+    let Some(ws) = state.workspaces.get(ws_idx) else {
+        return false;
+    };
+    let Some(pane) = ws.pane_state(pane_id) else {
+        return false;
+    };
+    let terminal_id = pane.attached_terminal_id.clone();
+    let Some(terminal) = state.terminals.get(&terminal_id) else {
+        return false;
+    };
+    let notes = terminal.notes.clone();
+    let pane_label = terminal
+        .border_label(true)
+        .or_else(|| terminal.agent_name.clone())
+        .unwrap_or_else(|| "pane".to_string());
+    let highlighted = notes.len().saturating_sub(1);
+    state.notes_list = Some(crate::app::state::NotesListState {
+        ws_idx,
+        pane_id,
+        terminal_id,
+        pane_label,
+        notes,
+        list: MenuListState::new(highlighted),
+    });
+    state.mode = Mode::NotesList;
+    true
+}
+
+pub(super) fn open_notes_list_for_focused_pane(state: &mut AppState) {
+    if let Some((ws_idx, pane_id)) = state.active.and_then(|ws_idx| {
+        state
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.focused_pane_id())
+            .map(|pane_id| (ws_idx, pane_id))
+    }) {
+        open_notes_list(state, ws_idx, pane_id);
+    }
+}
+
 pub(super) fn open_rename_pane(state: &mut AppState, pane_id: crate::layout::PaneId) {
     let Some(ws) = state.active.and_then(|i| state.workspaces.get(i)) else {
         return;
@@ -578,11 +651,26 @@ pub(super) fn apply_rename_action(state: &mut AppState, action: ModalAction) {
                         }
                     }
                 }
+                Mode::NoteCapture => {
+                    if let (Some(ws_idx), Some(pane_id)) = (state.active, state.note_target) {
+                        if let Some(ws) = state.workspaces.get(ws_idx) {
+                            if let Some(pane) = ws.pane_state(pane_id) {
+                                let terminal_id = pane.attached_terminal_id.clone();
+                                if let Some(terminal) = state.terminals.get_mut(&terminal_id) {
+                                    if terminal.add_note(new_name) {
+                                        state.mark_session_dirty();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
             state.creating_new_tab = false;
             state.pending_workspace_create_cwd = None;
             state.rename_pane_target = None;
+            state.note_target = None;
             state.name_input.clear();
             state.name_input_replace_on_type = false;
             leave_modal(state);
@@ -596,6 +684,7 @@ pub(super) fn apply_rename_action(state: &mut AppState, action: ModalAction) {
             state.requested_new_tab_name = None;
             state.pending_workspace_create_cwd = None;
             state.rename_pane_target = None;
+            state.note_target = None;
             state.name_input.clear();
             state.name_input_replace_on_type = false;
             leave_modal(state);
@@ -845,6 +934,16 @@ pub(super) fn apply_context_menu_action(
                 } else {
                     Mode::Navigate
                 };
+            }
+        }
+        (
+            ContextMenuKind::Pane {
+                ws_idx, pane_id, ..
+            },
+            Some(item),
+        ) if crate::app::state::is_notes_menu_label(item) => {
+            if !open_notes_list(state, ws_idx, pane_id) {
+                leave_modal(state);
             }
         }
         (ContextMenuKind::Pane { pane_id, .. }, Some("Rename pane")) => {
@@ -1098,6 +1197,19 @@ impl App {
                     }
                 }
             }
+            Mode::NoteCapture => {
+                if let (Some(ws_idx), Some(pane_id)) = (self.state.active, self.state.note_target) {
+                    if let Some(pane_id) = self.public_pane_id(ws_idx, pane_id) {
+                        self.runtime_pane_note_add(
+                            "tui.pane.notes.add",
+                            crate::api::schema::PaneNoteAddParams {
+                                pane_id,
+                                text: new_name,
+                            },
+                        );
+                    }
+                }
+            }
             _ => {}
         }
 
@@ -1197,6 +1309,121 @@ impl App {
         }
     }
 
+    pub(crate) fn handle_notes_list_key_via_api(&mut self, key: KeyEvent) {
+        let Some(notes) = self.state.notes_list.as_ref() else {
+            leave_modal(&mut self.state);
+            return;
+        };
+        let count = notes.notes.len();
+
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => self.close_notes_list(),
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(notes) = self.state.notes_list.as_mut() {
+                    notes.list.move_prev();
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(notes) = self.state.notes_list.as_mut() {
+                    notes.list.move_next(count);
+                }
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                if let Some(notes) = self.state.notes_list.as_mut() {
+                    notes.list.highlighted = 0;
+                }
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                if let Some(notes) = self.state.notes_list.as_mut() {
+                    notes.list.highlighted = count.saturating_sub(1);
+                }
+            }
+            KeyCode::Char('a') => {
+                let (ws_idx, pane_id) = (notes.ws_idx, notes.pane_id);
+                self.state.notes_list = None;
+                self.state.active = Some(ws_idx);
+                open_note_capture(&mut self.state, pane_id);
+            }
+            KeyCode::Char('d') => self.remove_selected_note(),
+            KeyCode::Enter | KeyCode::Char('p') => self.send_selected_note_to_pane(),
+            _ => {}
+        }
+    }
+
+    fn close_notes_list(&mut self) {
+        self.state.notes_list = None;
+        leave_modal(&mut self.state);
+    }
+
+    fn refresh_notes_list(&mut self) {
+        let Some(notes) = self.state.notes_list.as_ref() else {
+            return;
+        };
+        let latest = self
+            .state
+            .terminals
+            .get(&notes.terminal_id)
+            .map(|terminal| terminal.notes.clone())
+            .unwrap_or_default();
+        if latest.is_empty() {
+            self.close_notes_list();
+            return;
+        }
+        if let Some(notes) = self.state.notes_list.as_mut() {
+            notes.list.highlighted = notes.list.highlighted.min(latest.len() - 1);
+            notes.notes = latest;
+        }
+    }
+
+    fn remove_selected_note(&mut self) {
+        let Some(notes) = self.state.notes_list.as_ref() else {
+            return;
+        };
+        let index = notes.list.highlighted;
+        if index >= notes.notes.len() {
+            return;
+        }
+        let (ws_idx, pane_id) = (notes.ws_idx, notes.pane_id);
+        if let Some(pane_id) = self.public_pane_id(ws_idx, pane_id) {
+            self.runtime_pane_note_remove(
+                "tui.pane.notes.remove",
+                crate::api::schema::PaneNoteRemoveParams { pane_id, index },
+            );
+        }
+        self.refresh_notes_list();
+    }
+
+    fn send_selected_note_to_pane(&mut self) {
+        let Some(notes) = self.state.notes_list.as_ref() else {
+            return;
+        };
+        let index = notes.list.highlighted;
+        let Some(text) = notes.notes.get(index).cloned() else {
+            return;
+        };
+        let (ws_idx, pane_id, terminal_id) =
+            (notes.ws_idx, notes.pane_id, notes.terminal_id.clone());
+
+        let Some(runtime) = self.terminal_runtimes.get(&terminal_id) else {
+            return;
+        };
+        if runtime.try_send_paste(text).is_err() {
+            return;
+        }
+
+        if let Some(public_pane_id) = self.public_pane_id(ws_idx, pane_id) {
+            self.runtime_pane_note_remove(
+                "tui.pane.notes.remove",
+                crate::api::schema::PaneNoteRemoveParams {
+                    pane_id: public_pane_id.clone(),
+                    index,
+                },
+            );
+            self.runtime_pane_focus("tui.pane.notes.focus", public_pane_id);
+        }
+        self.close_notes_list();
+    }
+
     pub(crate) fn apply_context_menu_action_via_api(&mut self, menu: ContextMenuState, idx: usize) {
         let item = menu.items().get(idx).copied();
         match (menu.kind, item) {
@@ -1266,6 +1493,16 @@ impl App {
                 self.focus_workspace_idx_via_api(ws_idx);
                 self.focus_tab_idx_via_api(tab_idx);
                 if !self.close_active_tab_via_api_requires_confirmation() {
+                    leave_modal(&mut self.state);
+                }
+            }
+            (
+                ContextMenuKind::Pane {
+                    ws_idx, pane_id, ..
+                },
+                Some(item),
+            ) if crate::app::state::is_notes_menu_label(item) => {
+                if !open_notes_list(&mut self.state, ws_idx, pane_id) {
                     leave_modal(&mut self.state);
                 }
             }
@@ -1392,6 +1629,7 @@ fn cancel_rename_modal(state: &mut AppState) {
     state.requested_new_tab_name = None;
     state.pending_workspace_create_cwd = None;
     state.rename_pane_target = None;
+    state.note_target = None;
     state.name_input.clear();
     state.name_input_replace_on_type = false;
     leave_modal(state);
@@ -2239,6 +2477,7 @@ mod tests {
                 pane_id,
                 source_pane_id: None,
                 has_manual_label: false,
+                note_count: 0,
                 right_click_passthrough: false,
             },
             x: 0,
@@ -2287,6 +2526,7 @@ mod tests {
                 pane_id,
                 source_pane_id: None,
                 has_manual_label: false,
+                note_count: 0,
                 right_click_passthrough: false,
             },
             x: 0,
@@ -2397,6 +2637,7 @@ mod tests {
                 pane_id,
                 source_pane_id: None,
                 has_manual_label: false,
+                note_count: 0,
                 right_click_passthrough: false,
             },
             x: 0,

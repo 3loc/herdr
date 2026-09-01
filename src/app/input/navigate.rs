@@ -13,7 +13,7 @@ use ratatui::layout::Direction;
 
 use crate::{
     app::{
-        state::{AppState, Mode},
+        state::{AppState, Mode, SidebarSelection, ViewLayout},
         App,
     },
     input::TerminalKey,
@@ -117,6 +117,10 @@ impl App {
 
         if key.code == KeyCode::Esc || self.state.is_prefix_key(&raw_key) {
             leave_navigate_mode(&mut self.state);
+            return;
+        }
+
+        if self.state.sidebar_selection.is_some() && self.handle_sidebar_navigation_key(&raw_key) {
             return;
         }
 
@@ -246,6 +250,9 @@ impl App {
             NavigateAction::WorkspacePicker => {
                 self.state.mobile_switcher_scroll = 0;
                 self.state.mode = Mode::Navigate;
+                if self.state.view.layout == ViewLayout::Desktop {
+                    self.enter_sidebar_navigation();
+                }
             }
             NavigateAction::PreviousWorkspace => {
                 if let Some(ws_idx) = self.relative_visible_workspace(-1) {
@@ -323,6 +330,12 @@ impl App {
                 if !self.close_active_tab_via_api_requires_confirmation() {
                     leave_navigate_mode(&mut self.state);
                 }
+            }
+            NavigateAction::CaptureNote => {
+                super::modal::open_note_capture_for_focused_pane(&mut self.state);
+            }
+            NavigateAction::OpenNotes => {
+                super::modal::open_notes_list_for_focused_pane(&mut self.state);
             }
             NavigateAction::RenamePane => {
                 if let Some(pane_id) = self
@@ -544,12 +557,172 @@ impl App {
     }
 
     fn focus_pane_direction_in_context(&mut self, direction: NavDirection, context: ActionContext) {
+        if self.state.sidebar_selection.is_some() {
+            match direction {
+                NavDirection::Left => {}
+                NavDirection::Up => self.move_sidebar_selection(-1),
+                NavDirection::Down => self.move_sidebar_selection(1),
+                NavDirection::Right => self.activate_sidebar_selection(),
+            }
+            return;
+        }
+
+        if matches!(direction, NavDirection::Left)
+            && self.state.copy_mode.is_none()
+            && self.can_navigate_sidebar()
+            && (context == ActionContext::Prefix
+                || self.directional_pane_target_from_view(direction).is_none())
+        {
+            self.enter_sidebar_navigation();
+            return;
+        }
+
         let preserve_navigate_mode =
             context == ActionContext::Navigate && self.state.mode == Mode::Navigate;
         self.focus_pane_direction_via_api(direction);
         if preserve_navigate_mode {
             self.state.mode = Mode::Navigate;
         }
+    }
+
+    fn can_navigate_sidebar(&self) -> bool {
+        self.state.view.layout == ViewLayout::Desktop
+            && self.state.view.sidebar_rect.width > 0
+            && !self.state.workspaces.is_empty()
+    }
+
+    fn enter_sidebar_navigation(&mut self) {
+        if !self.can_navigate_sidebar() {
+            return;
+        }
+        let ws_idx = self
+            .state
+            .active
+            .unwrap_or(self.state.selected)
+            .min(self.state.workspaces.len().saturating_sub(1));
+        self.state.selected = ws_idx;
+        self.state.sidebar_selection = Some(SidebarSelection::Workspace(ws_idx));
+        self.state.mode = Mode::Navigate;
+        self.state.ensure_workspace_visible(ws_idx);
+    }
+
+    fn sidebar_navigation_targets(&self) -> Vec<SidebarSelection> {
+        let mut targets = self
+            .state
+            .visible_workspace_order()
+            .into_iter()
+            .map(SidebarSelection::Workspace)
+            .collect::<Vec<_>>();
+        targets.extend(
+            crate::ui::agent_panel_entries(&self.state)
+                .into_iter()
+                .enumerate()
+                .map(|(idx, _)| SidebarSelection::Agent(idx)),
+        );
+        targets
+    }
+
+    fn move_sidebar_selection(&mut self, delta: isize) {
+        let targets = self.sidebar_navigation_targets();
+        if targets.is_empty() {
+            self.state.sidebar_selection = None;
+            return;
+        }
+        let current = self.state.sidebar_selection;
+        let current_pos = current
+            .and_then(|selection| targets.iter().position(|target| *target == selection))
+            .or_else(|| {
+                self.state.active.and_then(|ws_idx| {
+                    targets
+                        .iter()
+                        .position(|target| *target == SidebarSelection::Workspace(ws_idx))
+                })
+            })
+            .unwrap_or(0);
+        let target_pos = current_pos
+            .saturating_add_signed(delta)
+            .min(targets.len().saturating_sub(1));
+        let target = targets[target_pos];
+        self.state.sidebar_selection = Some(target);
+        match target {
+            SidebarSelection::Workspace(ws_idx) => {
+                self.state.selected = ws_idx;
+                self.state.ensure_workspace_visible(ws_idx);
+            }
+            SidebarSelection::Agent(idx) => self.state.ensure_agent_panel_entry_visible(idx),
+        }
+    }
+
+    fn activate_sidebar_selection(&mut self) {
+        match self.state.sidebar_selection {
+            Some(SidebarSelection::Workspace(ws_idx)) if ws_idx < self.state.workspaces.len() => {
+                self.focus_workspace_idx_via_api(ws_idx);
+                leave_navigate_mode(&mut self.state);
+            }
+            Some(SidebarSelection::Agent(idx)) => {
+                if let Some((ws_idx, pane_id)) = self.agent_entry_target(idx) {
+                    self.focus_pane_internal_via_api(ws_idx, pane_id);
+                    leave_navigate_mode(&mut self.state);
+                } else {
+                    self.move_sidebar_selection(0);
+                }
+            }
+            _ => self.move_sidebar_selection(0),
+        }
+    }
+
+    fn handle_sidebar_navigation_key(&mut self, key: &TerminalKey) -> bool {
+        let (code, modifiers) = crate::config::normalize_key_combo((key.code, key.modifiers));
+        if modifiers.is_empty() {
+            match code {
+                KeyCode::Enter | KeyCode::Right => self.activate_sidebar_selection(),
+                KeyCode::Left => {}
+                _ => {
+                    if self
+                        .state
+                        .keybinds
+                        .navigate
+                        .workspace_up
+                        .matches_direct_key(key)
+                        || self.state.keybinds.navigate.pane_up.matches_direct_key(key)
+                    {
+                        self.move_sidebar_selection(-1);
+                    } else if self
+                        .state
+                        .keybinds
+                        .navigate
+                        .workspace_down
+                        .matches_direct_key(key)
+                        || self
+                            .state
+                            .keybinds
+                            .navigate
+                            .pane_down
+                            .matches_direct_key(key)
+                    {
+                        self.move_sidebar_selection(1);
+                    } else if self
+                        .state
+                        .keybinds
+                        .navigate
+                        .pane_right
+                        .matches_direct_key(key)
+                    {
+                        self.activate_sidebar_selection();
+                    } else if !self
+                        .state
+                        .keybinds
+                        .navigate
+                        .pane_left
+                        .matches_direct_key(key)
+                    {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+        false
     }
 
     pub(crate) fn resize_pane_direction_via_api(&mut self, direction: NavDirection) {
@@ -1426,6 +1599,8 @@ pub(crate) enum NavigateAction {
     MoveTabNext,
     CloseTab,
     RenamePane,
+    CaptureNote,
+    OpenNotes,
     FocusPaneLeft,
     FocusPaneDown,
     FocusPaneUp,
@@ -1573,6 +1748,8 @@ fn non_indexed_action_for_key(
         (&kb.move_tab_next, NavigateAction::MoveTabNext),
         (&kb.close_tab, NavigateAction::CloseTab),
         (&kb.rename_pane, NavigateAction::RenamePane),
+        (&kb.note, NavigateAction::CaptureNote),
+        (&kb.notes, NavigateAction::OpenNotes),
         (&kb.edit_scrollback, NavigateAction::EditScrollback),
         (&kb.copy_mode, NavigateAction::CopyMode),
         (&kb.focus_pane_left, NavigateAction::FocusPaneLeft),
@@ -1785,6 +1962,12 @@ pub(super) fn execute_navigate_action_in_context(
                 leave_navigate_mode(state);
             }
         }
+        NavigateAction::CaptureNote => {
+            super::modal::open_note_capture_for_focused_pane(state);
+        }
+        NavigateAction::OpenNotes => {
+            super::modal::open_notes_list_for_focused_pane(state);
+        }
         NavigateAction::RenamePane => {
             if let Some(pane_id) = state
                 .active
@@ -1953,6 +2136,7 @@ fn move_active_tab_relative(state: &mut AppState, delta: isize) {
 }
 
 fn leave_navigate_mode(state: &mut AppState) {
+    state.sidebar_selection = None;
     if state.active.is_some() {
         state.mode = Mode::Terminal;
     }
@@ -2076,6 +2260,138 @@ mod tests {
         app.state.active = (!app.state.workspaces.is_empty()).then_some(0);
         app.state.selected = 0;
         app
+    }
+
+    fn mark_test_agent(app: &mut App, ws_idx: usize) {
+        let pane_id = app.state.workspaces[ws_idx].tabs[0].root_pane;
+        let terminal_id = app.state.workspaces[ws_idx].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .detected_agent = Some(crate::detect::Agent::Codex);
+    }
+
+    #[test]
+    fn prefix_left_at_pane_boundary_enters_desktop_sidebar() {
+        let mut app = app_with_test_workspaces(&["one", "two"]);
+        crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 100, 24));
+        app.state.mode = Mode::Prefix;
+
+        app.execute_tui_navigate_action(NavigateAction::FocusPaneLeft, ActionContext::Prefix);
+
+        assert_eq!(app.state.mode, Mode::Navigate);
+        assert_eq!(
+            app.state.sidebar_selection,
+            Some(SidebarSelection::Workspace(0))
+        );
+    }
+
+    #[test]
+    fn prefix_left_enters_sidebar_even_when_a_left_pane_exists() {
+        let mut app = app_with_test_workspaces(&["one"]);
+        let right = app.state.workspaces[0].test_split(Direction::Horizontal);
+        app.state.workspaces[0].layout.focus_pane(right);
+        crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 100, 24));
+        app.state.mode = Mode::Prefix;
+
+        app.execute_tui_navigate_action(NavigateAction::FocusPaneLeft, ActionContext::Prefix);
+
+        assert_eq!(
+            app.state.sidebar_selection,
+            Some(SidebarSelection::Workspace(0))
+        );
+        assert_eq!(app.state.mode, Mode::Navigate);
+    }
+
+    #[test]
+    fn sidebar_j_and_k_traverse_spaces_then_agents() {
+        let mut app = app_with_test_workspaces(&["one", "two"]);
+        mark_test_agent(&mut app, 0);
+        mark_test_agent(&mut app, 1);
+        crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 100, 24));
+        app.enter_sidebar_navigation();
+
+        app.handle_navigate_key(TerminalKey::new(KeyCode::Char('j'), KeyModifiers::empty()));
+        assert_eq!(
+            app.state.sidebar_selection,
+            Some(SidebarSelection::Workspace(1))
+        );
+
+        app.handle_navigate_key(TerminalKey::new(KeyCode::Char('j'), KeyModifiers::empty()));
+        assert_eq!(
+            app.state.sidebar_selection,
+            Some(SidebarSelection::Agent(0))
+        );
+
+        app.handle_navigate_key(TerminalKey::new(KeyCode::Char('k'), KeyModifiers::empty()));
+        assert_eq!(
+            app.state.sidebar_selection,
+            Some(SidebarSelection::Workspace(1))
+        );
+    }
+
+    #[test]
+    fn sidebar_right_activates_agent_and_returns_to_terminal() {
+        let mut app = app_with_test_workspaces(&["one", "two"]);
+        mark_test_agent(&mut app, 1);
+        crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 100, 24));
+        app.enter_sidebar_navigation();
+        app.state.sidebar_selection = Some(SidebarSelection::Agent(0));
+
+        app.handle_navigate_key(TerminalKey::new(KeyCode::Char('l'), KeyModifiers::empty()));
+
+        assert_eq!(app.state.active, Some(1));
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert_eq!(app.state.sidebar_selection, None);
+    }
+
+    #[test]
+    fn hidden_sidebar_does_not_capture_left_pane_navigation() {
+        let mut app = app_with_test_workspaces(&["one"]);
+        app.state.sidebar_collapsed = true;
+        app.state.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
+        crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 100, 24));
+        app.state.mode = Mode::Prefix;
+
+        app.execute_tui_navigate_action(NavigateAction::FocusPaneLeft, ActionContext::Prefix);
+
+        assert_eq!(app.state.sidebar_selection, None);
+        assert_eq!(app.state.mode, Mode::Terminal);
+    }
+
+    #[test]
+    fn compact_sidebar_can_be_keyboard_focused() {
+        let mut app = app_with_test_workspaces(&["one"]);
+        app.state.sidebar_collapsed = true;
+        app.state.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Compact;
+        crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 100, 24));
+        app.state.mode = Mode::Prefix;
+
+        app.execute_tui_navigate_action(NavigateAction::FocusPaneLeft, ActionContext::Prefix);
+
+        assert_eq!(
+            app.state.sidebar_selection,
+            Some(SidebarSelection::Workspace(0))
+        );
+        assert_eq!(app.state.mode, Mode::Navigate);
+    }
+
+    #[test]
+    fn stale_agent_sidebar_selection_is_normalized_before_moving() {
+        let mut app = app_with_test_workspaces(&["one", "two"]);
+        crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 100, 24));
+        app.state.mode = Mode::Navigate;
+        app.state.sidebar_selection = Some(SidebarSelection::Agent(99));
+
+        app.handle_navigate_key(TerminalKey::new(KeyCode::Char('j'), KeyModifiers::empty()));
+
+        assert_eq!(
+            app.state.sidebar_selection,
+            Some(SidebarSelection::Workspace(1))
+        );
     }
 
     #[test]
@@ -3606,8 +3922,8 @@ navigate_pane_down = "ctrl+j"
             release_path.display(),
         );
         app.state.keybinds.custom_commands = vec![crate::config::CustomCommandKeybind {
-            bindings: crate::config::ActionKeybinds::prefix("m"),
-            label: "prefix+m".into(),
+            bindings: crate::config::ActionKeybinds::prefix("u"),
+            label: "prefix+u".into(),
             command,
             action: crate::config::CustomCommandAction::Shell,
             description: None,
@@ -3623,7 +3939,7 @@ navigate_pane_down = "ctrl+j"
         assert_eq!(app.state.mode, Mode::Prefix);
 
         let launch_started = std::time::Instant::now();
-        app.handle_key(TerminalKey::new(KeyCode::Char('m'), KeyModifiers::empty()))
+        app.handle_key(TerminalKey::new(KeyCode::Char('u'), KeyModifiers::empty()))
             .await;
         assert!(launch_started.elapsed() < Duration::from_secs(2));
 
@@ -3695,8 +4011,8 @@ navigate_pane_down = "ctrl+j"
         let output_path = unique_temp_path("custom-pane-command");
         let command = format!("printf done > '{}'", output_path.display());
         app.state.keybinds.custom_commands = vec![crate::config::CustomCommandKeybind {
-            bindings: crate::config::ActionKeybinds::prefix("m"),
-            label: "prefix+m".into(),
+            bindings: crate::config::ActionKeybinds::prefix("u"),
+            label: "prefix+u".into(),
             command,
             action: crate::config::CustomCommandAction::Pane,
             description: None,
@@ -3709,7 +4025,7 @@ navigate_pane_down = "ctrl+j"
             app.state.prefix_mods,
         ))
         .await;
-        app.handle_key(TerminalKey::new(KeyCode::Char('m'), KeyModifiers::empty()))
+        app.handle_key(TerminalKey::new(KeyCode::Char('u'), KeyModifiers::empty()))
             .await;
 
         assert_eq!(app.state.workspaces[0].tabs[0].layout.pane_count(), 2);

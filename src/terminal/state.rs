@@ -2,6 +2,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+pub const MAX_PANE_NOTES: usize = 100;
+pub const MAX_PANE_NOTE_BYTES: usize = 4096;
+
 // Effective state arbitration is intentionally centralized here. Full lifecycle
 // Herdr hook integrations are hook-authoritative while live; screen recovery
 // remains only for session-only/custom hook paths and fallback detection.
@@ -130,6 +133,8 @@ pub struct TerminalState {
     pub persisted_agent_session: Option<crate::agent_resume::PersistedAgentSession>,
     pub terminal_title: Option<String>,
     pub manual_label: Option<String>,
+    /// Notes attached to this terminal, oldest first.
+    pub notes: Vec<String>,
     pub agent_name: Option<String>,
     agent_name_owner: Option<AgentNameOwner>,
     managed_agent: Option<ManagedAgent>,
@@ -164,6 +169,7 @@ impl TerminalState {
             persisted_agent_session: None,
             terminal_title: None,
             manual_label: None,
+            notes: Vec::new(),
             agent_name: None,
             agent_name_owner: None,
             managed_agent: None,
@@ -1864,6 +1870,36 @@ impl TerminalState {
 
     pub fn clear_manual_label(&mut self) {
         self.manual_label = None;
+    }
+
+    /// Append a non-empty note.
+    pub fn add_note(&mut self, note: String) -> bool {
+        let note = note.trim().replace(['\r', '\n'], " ");
+        if note.is_empty() || note.len() > MAX_PANE_NOTE_BYTES || self.notes.len() >= MAX_PANE_NOTES
+        {
+            return false;
+        }
+        self.notes.push(note);
+        true
+    }
+
+    pub fn remove_note(&mut self, index: usize) -> Option<String> {
+        (index < self.notes.len()).then(|| self.notes.remove(index))
+    }
+
+    pub fn clear_notes(&mut self) {
+        self.notes.clear();
+    }
+
+    pub fn restore_notes(&mut self, notes: Vec<String>) {
+        self.notes.clear();
+        for note in notes.into_iter().take(MAX_PANE_NOTES) {
+            self.add_note(note);
+        }
+    }
+
+    pub fn has_notes(&self) -> bool {
+        !self.notes.is_empty()
     }
 
     pub fn set_agent_name(&mut self, name: String) {
@@ -5882,5 +5918,16 @@ mod tests {
             terminal.hook_authority.as_ref().unwrap().source,
             "custom:pi"
         );
+    }
+
+    #[test]
+    fn pane_notes_are_bounded() {
+        let mut terminal = test_terminal();
+        assert!(!terminal.add_note("x".repeat(MAX_PANE_NOTE_BYTES + 1)));
+        for index in 0..MAX_PANE_NOTES {
+            assert!(terminal.add_note(format!("note {index}")));
+        }
+        assert!(!terminal.add_note("one too many".into()));
+        assert_eq!(terminal.notes.len(), MAX_PANE_NOTES);
     }
 }

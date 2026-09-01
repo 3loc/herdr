@@ -176,6 +176,10 @@ herdr pane focus --direction left|right|up|down [--pane ID|--current]
 herdr pane resize --direction left|right|up|down [--amount FLOAT] [--pane ID|--current]
 herdr pane zoom [<pane_id>|--pane ID|--current] [--toggle|--on|--off]
 herdr pane rename <pane_id> <label>|--clear
+herdr pane notes list <pane_id>|--current
+herdr pane notes add <pane_id>|--current <text>
+herdr pane notes remove <pane_id>|--current <index>
+herdr pane notes clear <pane_id>|--current
 herdr pane input [<pane_id>|--pane ID|--current] --right-click herdr|pane
 herdr pane split [<pane_id>|--pane ID|--current] --direction right|down [--ratio FLOAT] [--cwd PATH] [--env KEY=VALUE] [--right-click herdr|pane] [--focus] [--no-focus]
 herdr pane swap --direction left|right|up|down [--pane ID|--current]
@@ -206,6 +210,8 @@ herdr pane read <pane_id> [--source visible|recent|recent-unwrapped|detection] [
 herdr pane read <pane_id> --source visible --ansi
 herdr pane read <pane_id> --source recent-unwrapped --lines 120
 ```
+
+Pane notes are short lines a user stacks against a pane while its agent is busy. Herdr delivers one queued note per completed agent turn, so they usually reach the agent as ordinary prompts; `pane notes list` reads them directly when an agent needs the standing context behind a request. Notes also appear as `notes` on `pane get` and `pane list`. Each pane holds up to 100 notes of 4 KiB each.
 
 `pane read` prints UTF-8 terminal text directly. ANSI escapes are stripped by default; use `--format ansi` or `--ansi` to preserve them where the source exposes styling. The `detection` source is always plain text. For recent sources, `--lines N` selects the last N rendered terminal rows before optional unwrapping; without it, reads default to 80 rows. For `visible` and `detection`, omitting `--lines` returns the full snapshot, while specifying it keeps the last N newline-delimited lines. `agent read` uses the same output and line behavior.
 

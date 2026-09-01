@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Clear, Paragraph, Wrap},
+    widgets::{Clear, List, ListItem, ListState, Paragraph, Wrap},
     Frame,
 };
 
@@ -75,6 +75,128 @@ fn render_name_input_field(app: &AppState, frame: &mut Frame, input_rect: Rect) 
     frame.set_cursor_position((caret_x, input_rect.y));
 }
 
+const NOTES_POPUP_WIDTH: u16 = 64;
+
+/// Render the notes browser for one pane.
+pub(super) fn render_notes_overlay(app: &AppState, frame: &mut Frame, area: Rect) {
+    super::dim_background(frame, area);
+
+    let Some(notes) = &app.notes_list else {
+        return;
+    };
+
+    let rows_wanted = notes.notes.len().clamp(1, 12) as u16;
+    let Some(inner) = render_modal_shell(
+        frame,
+        area,
+        NOTES_POPUP_WIDTH,
+        rows_wanted + 6,
+        &app.palette,
+    ) else {
+        return;
+    };
+    if inner.height < 4 {
+        return;
+    }
+
+    let [header, _, body, _] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(1),
+        Constraint::Length(3),
+    ])
+    .areas(inner);
+
+    render_modal_header(
+        frame,
+        header,
+        &format!("notes · {}", notes.pane_label),
+        &app.palette,
+    );
+
+    if notes.notes.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "no notes yet; press a to add one",
+                Style::default().fg(app.palette.overlay0),
+            ))),
+            body,
+        );
+    } else {
+        let width = body.width.saturating_sub(2) as usize;
+        let items: Vec<ListItem> = notes
+            .notes
+            .iter()
+            .map(|note| ListItem::new(Line::from(truncate_end(note, width))))
+            .collect();
+        let list = List::new(items)
+            .style(Style::default().fg(app.palette.text))
+            .highlight_style(
+                Style::default()
+                    .bg(app.palette.accent)
+                    .fg(panel_contrast_fg(&app.palette))
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(" ");
+        let mut state = ListState::default().with_selected(Some(notes.list.highlighted));
+        frame.render_stateful_widget(list, body, &mut state);
+    }
+
+    let button_rects = action_button_row_rects(
+        inner,
+        &[
+            ActionButtonSpec {
+                hint: Some("↵/p"),
+                label: "send to pane",
+            },
+            ActionButtonSpec {
+                hint: Some("a"),
+                label: "add",
+            },
+            ActionButtonSpec {
+                hint: Some("d"),
+                label: "delete",
+            },
+            ActionButtonSpec {
+                hint: Some("esc"),
+                label: "close",
+            },
+        ],
+        2,
+        3,
+    );
+    let styles = [
+        Style::default()
+            .fg(panel_contrast_fg(&app.palette))
+            .bg(app.palette.accent)
+            .add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(app.palette.text)
+            .bg(app.palette.surface0)
+            .add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(app.palette.text)
+            .bg(app.palette.surface0)
+            .add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(app.palette.text)
+            .bg(app.palette.surface0)
+            .add_modifier(Modifier::BOLD),
+    ];
+    for ((rect, spec), style) in button_rects
+        .iter()
+        .zip([
+            ("↵/p", "send to pane"),
+            ("a", "add"),
+            ("d", "delete"),
+            ("esc", "close"),
+        ])
+        .zip(styles)
+    {
+        render_action_button(frame, *rect, Some(spec.0), spec.1, style);
+    }
+}
+
 pub(super) fn render_rename_overlay(app: &AppState, frame: &mut Frame, area: Rect) {
     super::dim_background(frame, area);
 
@@ -84,6 +206,7 @@ pub(super) fn render_rename_overlay(app: &AppState, frame: &mut Frame, area: Rec
         Mode::RenameTab if app.creating_new_tab => "new tab",
         Mode::RenameTab => "rename tab",
         Mode::RenamePane => "rename pane",
+        Mode::NoteCapture => "note",
         _ => return,
     };
 

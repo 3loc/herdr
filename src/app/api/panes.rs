@@ -6,9 +6,9 @@ use crate::api::schema::{
     PaneFocusDirectionReason, PaneFocusDirectionResult, PaneInfo, PaneInputSetParams,
     PaneLayoutPane, PaneLayoutParams, PaneLayoutRect, PaneLayoutSnapshot, PaneLayoutSplit,
     PaneListParams, PaneMoveDestination, PaneMoveParams, PaneMoveReason, PaneMoveResult,
-    PaneNeighborParams, PaneNeighborResult, PaneProcessInfo, PaneProcessInfoParams,
-    PaneProcessInfoProcess, PaneReadParams, PaneReadResult, PaneReleaseAgentParams,
-    PaneRenameParams, PaneReportAgentParams, PaneReportAgentSessionParams,
+    PaneNeighborParams, PaneNeighborResult, PaneNoteAddParams, PaneNoteRemoveParams,
+    PaneProcessInfo, PaneProcessInfoParams, PaneProcessInfoProcess, PaneReadParams, PaneReadResult,
+    PaneReleaseAgentParams, PaneRenameParams, PaneReportAgentParams, PaneReportAgentSessionParams,
     PaneReportMetadataParams, PaneResizeParams, PaneResizeReason, PaneResizeResult,
     PaneSendInputParams, PaneSendKeysParams, PaneSendTextParams, PaneSplitParams, PaneSwapParams,
     PaneSwapReason, PaneSwapResult, PaneTarget, PaneZoomMode, PaneZoomParams, PaneZoomReason,
@@ -1184,6 +1184,118 @@ impl App {
         let pane = self.pane_info(ws_idx, pane_id).unwrap();
 
         encode_success(id, ResponseResult::PaneInfo { pane })
+    }
+
+    /// Resolve the terminal that owns a pane's notes.
+    fn notes_terminal_id(
+        &self,
+        ws_idx: usize,
+        pane_id: crate::layout::PaneId,
+    ) -> Option<crate::terminal::TerminalId> {
+        self.state
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.terminal_id(pane_id))
+            .cloned()
+    }
+
+    fn encode_pane_notes(&mut self, id: String, public_pane_id: String) -> String {
+        let notes = self
+            .parse_pane_id(&public_pane_id)
+            .and_then(|(ws_idx, pane_id)| self.notes_terminal_id(ws_idx, pane_id))
+            .and_then(|terminal_id| self.state.terminals.get(&terminal_id))
+            .map(|terminal| terminal.notes.clone())
+            .unwrap_or_default();
+        encode_success(
+            id,
+            ResponseResult::PaneNotes {
+                notes: crate::api::schema::PaneNotes {
+                    pane_id: public_pane_id,
+                    notes,
+                },
+            },
+        )
+    }
+
+    pub(super) fn handle_pane_notes_list(&mut self, id: String, params: PaneTarget) -> String {
+        let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let Some(public_pane_id) = self.public_pane_id(ws_idx, pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        self.encode_pane_notes(id, public_pane_id)
+    }
+
+    pub(super) fn handle_pane_note_add(&mut self, id: String, params: PaneNoteAddParams) -> String {
+        let text = params.text.trim();
+        if text.is_empty() {
+            return encode_error(id, "invalid_note", "note must not be blank");
+        }
+        if text.len() > crate::terminal::MAX_PANE_NOTE_BYTES {
+            return encode_error(id, "note_too_large", "note exceeds the 4 KiB limit");
+        }
+        let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let Some(public_pane_id) = self.public_pane_id(ws_idx, pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let Some(terminal_id) = self.notes_terminal_id(ws_idx, pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let Some(terminal) = self.state.terminals.get_mut(&terminal_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        if terminal.notes.len() >= crate::terminal::MAX_PANE_NOTES {
+            return encode_error(id, "note_limit", "pane already has 100 notes");
+        }
+        terminal.add_note(text.to_string());
+        self.state.mark_session_dirty();
+        self.encode_pane_notes(id, public_pane_id)
+    }
+
+    pub(super) fn handle_pane_note_remove(
+        &mut self,
+        id: String,
+        params: PaneNoteRemoveParams,
+    ) -> String {
+        let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let Some(public_pane_id) = self.public_pane_id(ws_idx, pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let Some(terminal_id) = self.notes_terminal_id(ws_idx, pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let Some(terminal) = self.state.terminals.get_mut(&terminal_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        if terminal.remove_note(params.index).is_some() {
+            self.state.mark_session_dirty();
+        }
+        self.encode_pane_notes(id, public_pane_id)
+    }
+
+    pub(super) fn handle_pane_notes_clear(&mut self, id: String, params: PaneTarget) -> String {
+        let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let Some(public_pane_id) = self.public_pane_id(ws_idx, pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let Some(terminal_id) = self.notes_terminal_id(ws_idx, pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let Some(terminal) = self.state.terminals.get_mut(&terminal_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        if terminal.has_notes() {
+            terminal.clear_notes();
+            self.state.mark_session_dirty();
+        }
+        self.encode_pane_notes(id, public_pane_id)
     }
 
     pub(super) fn handle_pane_read(&mut self, id: String, params: PaneReadParams) -> String {

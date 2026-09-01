@@ -686,6 +686,18 @@
           "description": "Rename the focused pane."
         },
         {
+          "key": "keys.note",
+          "type": "keybinding",
+          "default": "\"prefix+a\"",
+          "description": "Jot a note on the focused pane without touching the pane."
+        },
+        {
+          "key": "keys.notes",
+          "type": "keybinding",
+          "default": "\"prefix+m\"",
+          "description": "Open the focused pane's notes."
+        },
+        {
           "key": "keys.edit_scrollback",
           "type": "keybinding",
           "default": "\"prefix+e\"",

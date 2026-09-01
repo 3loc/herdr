@@ -1,8 +1,9 @@
 use crate::api::schema::{
     Method, OutputMatch, PaneCurrentParams, PaneDirection, PaneEdgesParams,
     PaneFocusDirectionParams, PaneInputSetParams, PaneLayoutParams, PaneListParams,
-    PaneMoveDestination, PaneMoveParams, PaneNeighborParams, PaneProcessInfoParams, PaneReadParams,
-    PaneReleaseAgentParams, PaneRenameParams, PaneReportAgentParams, PaneReportAgentSessionParams,
+    PaneMoveDestination, PaneMoveParams, PaneNeighborParams, PaneNoteAddParams,
+    PaneNoteRemoveParams, PaneProcessInfoParams, PaneReadParams, PaneReleaseAgentParams,
+    PaneRenameParams, PaneReportAgentParams, PaneReportAgentSessionParams,
     PaneReportMetadataParams, PaneResizeParams, PaneRightClickTarget, PaneSendInputParams,
     PaneSendKeysParams, PaneSendTextParams, PaneSplitParams, PaneSwapParams, PaneTarget,
     PaneWaitForOutputParams, PaneZoomMode, PaneZoomParams, ReadFormat, ReadSource, Request,
@@ -28,6 +29,7 @@ pub(super) fn run_pane_command(args: &[String]) -> std::io::Result<i32> {
         "zoom" => pane_zoom(&args[1..]),
         "read" => pane_read(&args[1..]),
         "rename" => pane_rename(&args[1..]),
+        "notes" => pane_notes(&args[1..]),
         "input" => pane_input(&args[1..]),
         "split" => pane_split(&args[1..]),
         "swap" => pane_swap(&args[1..]),
@@ -429,6 +431,126 @@ fn parse_pane_zoom_args(args: &[String]) -> Result<PaneZoomParams, String> {
     }
 
     Ok(PaneZoomParams { pane_id, mode })
+}
+
+/// Read and edit notes attached to a pane.
+fn pane_notes(args: &[String]) -> std::io::Result<i32> {
+    let Some(subcommand) = args.first().map(|arg| arg.as_str()) else {
+        print_pane_notes_help();
+        return Ok(2);
+    };
+
+    match subcommand {
+        "list" => pane_notes_list(&args[1..]),
+        "add" => pane_notes_add(&args[1..]),
+        "clear" => pane_notes_clear(&args[1..]),
+        "remove" => pane_notes_remove(&args[1..]),
+        "help" | "--help" | "-h" => {
+            print_pane_notes_help();
+            Ok(0)
+        }
+        _ => {
+            print_pane_notes_help();
+            Ok(2)
+        }
+    }
+}
+
+fn pane_notes_target(args: &[String], usage: &str) -> Result<String, i32> {
+    match args.first().map(|arg| arg.as_str()) {
+        Some("--current") if args.len() == 1 => std::env::var("HERDR_PANE_ID")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| super::normalize_pane_id(&value))
+            .ok_or_else(|| {
+                eprintln!("--current requires HERDR_PANE_ID");
+                2
+            }),
+        Some(raw_pane_id) if args.len() == 1 && !raw_pane_id.starts_with("--") => {
+            Ok(super::normalize_pane_id(raw_pane_id))
+        }
+        _ => {
+            eprintln!("{usage}");
+            Err(2)
+        }
+    }
+}
+
+fn pane_notes_list(args: &[String]) -> std::io::Result<i32> {
+    let pane_id = match pane_notes_target(args, "usage: herdr pane notes list <pane_id>|--current")
+    {
+        Ok(pane_id) => pane_id,
+        Err(code) => return Ok(code),
+    };
+
+    super::print_response(&super::send_request(&Request {
+        id: "cli:pane:notes:list".into(),
+        method: Method::PaneNotesList(PaneTarget { pane_id }),
+    })?)
+}
+
+fn pane_notes_clear(args: &[String]) -> std::io::Result<i32> {
+    let pane_id = match pane_notes_target(args, "usage: herdr pane notes clear <pane_id>|--current")
+    {
+        Ok(pane_id) => pane_id,
+        Err(code) => return Ok(code),
+    };
+
+    super::print_response(&super::send_request(&Request {
+        id: "cli:pane:notes:clear".into(),
+        method: Method::PaneNotesClear(PaneTarget { pane_id }),
+    })?)
+}
+
+fn pane_notes_add(args: &[String]) -> std::io::Result<i32> {
+    const USAGE: &str = "usage: herdr pane notes add <pane_id>|--current <text>";
+    if args.len() < 2 {
+        eprintln!("{USAGE}");
+        return Ok(2);
+    }
+    let pane_id = match pane_notes_target(&args[..1], USAGE) {
+        Ok(pane_id) => pane_id,
+        Err(code) => return Ok(code),
+    };
+
+    super::print_response(&super::send_request(&Request {
+        id: "cli:pane:notes:add".into(),
+        method: Method::PaneNoteAdd(PaneNoteAddParams {
+            pane_id,
+            text: args[1..].join(" "),
+        }),
+    })?)
+}
+
+fn pane_notes_remove(args: &[String]) -> std::io::Result<i32> {
+    if args.len() != 2 {
+        eprintln!("usage: herdr pane notes remove <pane_id>|--current <index>");
+        return Ok(2);
+    }
+    let pane_id = match pane_notes_target(
+        &args[..1],
+        "usage: herdr pane notes remove <pane_id>|--current <index>",
+    ) {
+        Ok(pane_id) => pane_id,
+        Err(code) => return Ok(code),
+    };
+    let Ok(index) = args[1].parse::<usize>() else {
+        eprintln!("index must be a non-negative integer");
+        return Ok(2);
+    };
+
+    super::print_response(&super::send_request(&Request {
+        id: "cli:pane:notes:remove".into(),
+        method: Method::PaneNoteRemove(PaneNoteRemoveParams { pane_id, index }),
+    })?)
+}
+
+fn print_pane_notes_help() {
+    eprintln!("herdr pane notes commands:");
+    eprintln!("  herdr pane notes list <pane_id>|--current");
+    eprintln!("  herdr pane notes add <pane_id>|--current <text>");
+    eprintln!("  herdr pane notes remove <pane_id>|--current <index>");
+    eprintln!("  herdr pane notes clear <pane_id>|--current");
 }
 
 fn pane_rename(args: &[String]) -> std::io::Result<i32> {
@@ -1681,6 +1803,10 @@ fn print_pane_help() {
     );
     eprintln!("  herdr pane zoom [<pane_id>|--pane ID|--current] [--toggle|--on|--off]");
     eprintln!("  herdr pane rename <pane_id> <label>|--clear");
+    eprintln!("  herdr pane notes list <pane_id>|--current");
+    eprintln!("  herdr pane notes add <pane_id>|--current <text>");
+    eprintln!("  herdr pane notes remove <pane_id>|--current <index>");
+    eprintln!("  herdr pane notes clear <pane_id>|--current");
     eprintln!("  herdr pane read <pane_id> [--source visible|recent|recent-unwrapped] [--lines N] [--format text|ansi] [--ansi]");
     eprintln!("  herdr pane input [<pane_id>|--pane ID|--current] --right-click herdr|pane");
     eprintln!(
