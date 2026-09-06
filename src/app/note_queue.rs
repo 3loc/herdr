@@ -53,10 +53,17 @@ impl App {
         }
 
         let (encoded, enter) = crate::app::api_helpers::encode_api_submission_parts(runtime, &text);
-        if runtime.try_send_bytes(Bytes::from(encoded)).is_err() {
+        if runtime
+            .queue_user_input_submission(
+                Bytes::from(encoded),
+                Bytes::from(enter),
+                QUEUED_NOTE_SUBMIT_DELAY,
+                None,
+            )
+            .is_err()
+        {
             return None;
         }
-        runtime.send_bytes_after(Bytes::from(enter), QUEUED_NOTE_SUBMIT_DELAY);
 
         let terminal = self.state.terminals.get_mut(&terminal_id)?;
         let sent = terminal.remove_note(0);
