@@ -1090,19 +1090,26 @@ fn write_terminal_session_output(mut stream: LocalStream) -> io::Result<()> {
     loop {
         match protocol::read_message(&mut stream, MAX_GRAPHICS_FRAME_SIZE) {
             Ok(ServerMessage::Terminal(frame)) => {
-                let encoded = base64::engine::general_purpose::STANDARD.encode(&frame.bytes);
-                let line = serde_json::json!({
-                    "type": "terminal.frame",
-                    "seq": frame.seq,
-                    "encoding": "ansi",
-                    "width": frame.width,
-                    "height": frame.height,
-                    "full": frame.full,
-                    "bytes": encoded,
-                });
-                serde_json::to_writer(&mut stdout, &line)?;
-                stdout.write_all(b"\n")?;
-                stdout.flush()?;
+                write_terminal_session_frame(
+                    &mut stdout,
+                    frame.seq,
+                    frame.width,
+                    frame.height,
+                    frame.full,
+                    &frame.bytes,
+                )?;
+            }
+            Ok(ServerMessage::MouseCapture {
+                enabled,
+                sgr_pixels,
+            }) => {
+                // A normal Herdr client applies this server instruction to its
+                // host terminal. JSON bridge clients have no TTY of their own,
+                // so carry the same DEC modes as an ANSI chunk for their
+                // terminal emulator. Without this, mobile header/sidebar
+                // buttons render but can never emit mouse input.
+                let bytes = terminal_session_mouse_capture_bytes(enabled, sgr_pixels);
+                write_terminal_session_frame(&mut stdout, 0, 0, 0, false, &bytes)?;
             }
             Ok(ServerMessage::ServerShutdown { reason }) => {
                 let line = serde_json::json!({
@@ -1120,6 +1127,45 @@ fn write_terminal_session_output(mut stream: LocalStream) -> io::Result<()> {
             Err(err) => return Err(io::Error::other(err.to_string())),
         }
     }
+}
+
+fn write_terminal_session_frame(
+    stdout: &mut impl io::Write,
+    seq: u64,
+    width: u16,
+    height: u16,
+    full: bool,
+    bytes: &[u8],
+) -> io::Result<()> {
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    let line = serde_json::json!({
+        "type": "terminal.frame",
+        "seq": seq,
+        "encoding": "ansi",
+        "width": width,
+        "height": height,
+        "full": full,
+        "bytes": encoded,
+    });
+    serde_json::to_writer(&mut *stdout, &line)?;
+    stdout.write_all(b"\n")?;
+    stdout.flush()
+}
+
+fn terminal_session_mouse_capture_bytes(enabled: bool, sgr_pixels: bool) -> Vec<u8> {
+    const RESET: &[u8] =
+        b"\x1b[?1016l\x1b[?1006l\x1b[?1015l\x1b[?1005l\x1b[?1003l\x1b[?1002l\x1b[?1000l";
+    const ENABLE: &[u8] = b"\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h";
+    let mut bytes = RESET.to_vec();
+    if enabled {
+        bytes.extend_from_slice(ENABLE);
+        bytes.extend_from_slice(if sgr_pixels {
+            b"\x1b[?1016h"
+        } else {
+            b"\x1b[?1016l"
+        });
+    }
+    bytes
 }
 
 #[derive(serde::Deserialize)]
@@ -3612,6 +3658,27 @@ mod tests {
             panic!("expected input command");
         };
         assert_eq!(data, b"\x1b[A");
+    }
+
+    #[test]
+    fn terminal_session_mouse_mode_enables_clicks_for_json_bridge_terminals() {
+        let enabled = terminal_session_mouse_capture_bytes(true, false);
+        assert!(enabled
+            .windows(b"\x1b[?1000h".len())
+            .any(|w| w == b"\x1b[?1000h"));
+        assert!(enabled
+            .windows(b"\x1b[?1006h".len())
+            .any(|w| w == b"\x1b[?1006h"));
+        assert!(enabled.ends_with(b"\x1b[?1016l"));
+
+        let pixels = terminal_session_mouse_capture_bytes(true, true);
+        assert!(pixels.ends_with(b"\x1b[?1016h"));
+
+        let disabled = terminal_session_mouse_capture_bytes(false, false);
+        assert!(disabled.ends_with(b"\x1b[?1000l"));
+        assert!(!disabled
+            .windows(b"\x1b[?1000h".len())
+            .any(|w| w == b"\x1b[?1000h"));
     }
 
     #[test]
