@@ -254,6 +254,7 @@ fn help_commands_exit_successfully() {
     let help_cases: &[&[&str]] = &[
         &["--help"],
         &["agent", "wait", "--help"],
+        &["terminal", "session", "app", "-h"],
         &["terminal", "session", "control", "-h"],
     ];
 

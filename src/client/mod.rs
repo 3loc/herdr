@@ -968,7 +968,7 @@ pub fn run_terminal_attach(_terminal_id: String, _takeover: bool) -> io::Result<
 /// Runs a read-only terminal session observer and prints one JSON envelope per frame.
 pub fn run_terminal_session_observe(target: String, cols: u16, rows: u16) -> io::Result<()> {
     let mut stream =
-        connect_terminal_session_stream(target.clone(), cols, rows, "observing terminal session")?;
+        connect_terminal_session_stream(&target, cols, rows, "observing terminal session")?;
     write_to_server(&mut stream, &ClientMessage::ObserveTerminal { target })?;
     write_terminal_session_output(stream)
 }
@@ -980,17 +980,23 @@ pub fn run_terminal_session_control(
     cols: u16,
     rows: u16,
 ) -> io::Result<()> {
-    let mut stream = connect_terminal_session_stream(
-        target.clone(),
-        cols,
-        rows,
-        "controlling terminal session",
-    )?;
+    let mut stream =
+        connect_terminal_session_stream(&target, cols, rows, "controlling terminal session")?;
     write_to_server(
         &mut stream,
         &ClientMessage::ControlTerminal { target, takeover },
     )?;
 
+    run_json_session_controller(stream)
+}
+
+/// Runs a writable, rendered full-app session controller for bridge processes.
+pub fn run_app_session_control(cols: u16, rows: u16) -> io::Result<()> {
+    let stream = connect_json_session_stream(cols, rows, "controlling app session", None, false)?;
+    run_json_session_controller(stream)
+}
+
+fn run_json_session_controller(stream: LocalStream) -> io::Result<()> {
     let mut write_stream = stream.try_clone()?;
     let _input_thread = std::thread::spawn(move || {
         let stdin = io::stdin();
@@ -1021,16 +1027,30 @@ pub fn run_terminal_session_control(
 }
 
 fn connect_terminal_session_stream(
-    target: String,
+    target: &str,
     cols: u16,
     rows: u16,
     log_message: &'static str,
+) -> io::Result<LocalStream> {
+    connect_json_session_stream(cols, rows, log_message, Some(target), true)
+}
+
+fn connect_json_session_stream(
+    cols: u16,
+    rows: u16,
+    log_message: &'static str,
+    target: Option<&str>,
+    direct_attach_requested: bool,
 ) -> io::Result<LocalStream> {
     init_logging();
 
     let socket_path = client_socket_path();
     crate::logging::startup("client");
-    info!(path = %socket_path.display(), target = %target, cols, rows, "{log_message}");
+    if let Some(target) = target {
+        info!(path = %socket_path.display(), target, cols, rows, "{log_message}");
+    } else {
+        info!(path = %socket_path.display(), cols, rows, "{log_message}");
+    }
 
     let mut stream = match crate::ipc::connect_local_stream(&socket_path) {
         Ok(stream) => stream,
@@ -1048,13 +1068,11 @@ fn connect_terminal_session_stream(
         0,
         false,
         RenderEncoding::TerminalAnsi,
-        true,
+        direct_attach_requested,
     ) {
         Ok(RenderEncoding::TerminalAnsi) => {}
         Ok(encoding) => {
-            eprintln!(
-                "herdr: terminal session observe negotiated unsupported encoding {encoding:?}"
-            );
+            eprintln!("herdr: terminal session negotiated unsupported encoding {encoding:?}");
             std::process::exit(1);
         }
         Err(err) => {

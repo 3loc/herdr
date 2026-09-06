@@ -710,6 +710,12 @@ fn terminal_command() -> Command {
             Command::new("session")
                 .about("Work with terminal sessions")
                 .subcommand(
+                    Command::new("app")
+                        .about("Control the rendered full Herdr app stream")
+                        .arg(option("cols", "N"))
+                        .arg(option("rows", "N")),
+                )
+                .subcommand(
                     Command::new("control")
                         .about("Control a terminal stream")
                         .arg(required("target", "TARGET"))

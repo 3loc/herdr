@@ -43,6 +43,7 @@ const TERMINAL_SESSION_OBSERVE_USAGE: &str =
     "usage: herdr terminal session observe <target> [--cols N] [--rows N]";
 const TERMINAL_SESSION_CONTROL_USAGE: &str =
     "usage: herdr terminal session control <target> [--takeover] [--cols N] [--rows N]";
+const TERMINAL_SESSION_APP_USAGE: &str = "usage: herdr terminal session app [--cols N] [--rows N]";
 pub(crate) const AGENT_HELP_FOOTER: &str = concat!(
     "Are you an AI? Use these resources ONLY IF your task specifically asks you to:\n",
     "  Help a human understand or set up Herdr for the first time:\n",
@@ -539,19 +540,31 @@ fn terminal_attach(args: &[String]) -> std::io::Result<i32> {
 
 fn terminal_session(args: &[String]) -> std::io::Result<i32> {
     match args.first().map(|arg| arg.as_str()) {
+        Some("app") => terminal_session_app(&args[1..]),
         Some("control") => terminal_session_control(&args[1..]),
         Some("observe") => terminal_session_observe(&args[1..]),
         Some("help" | "--help" | "-h") => {
+            eprintln!("{TERMINAL_SESSION_APP_USAGE}");
             eprintln!("{TERMINAL_SESSION_CONTROL_USAGE}");
             eprintln!("{TERMINAL_SESSION_OBSERVE_USAGE}");
             Ok(0)
         }
         _ => {
+            eprintln!("{TERMINAL_SESSION_APP_USAGE}");
             eprintln!("{TERMINAL_SESSION_CONTROL_USAGE}");
             eprintln!("{TERMINAL_SESSION_OBSERVE_USAGE}");
             Ok(2)
         }
     }
+}
+
+fn terminal_session_app(args: &[String]) -> std::io::Result<i32> {
+    let (cols, rows) = match parse_terminal_app_session_options(args)? {
+        Ok(options) => options,
+        Err(code) => return Ok(code),
+    };
+    crate::client::run_app_session_control(cols, rows)?;
+    Ok(0)
 }
 
 fn terminal_session_control(args: &[String]) -> std::io::Result<i32> {
@@ -658,6 +671,42 @@ fn parse_terminal_session_options(
         rows,
         takeover,
     }))
+}
+
+fn parse_terminal_app_session_options(args: &[String]) -> std::io::Result<Result<(u16, u16), i32>> {
+    let mut cols = 120;
+    let mut rows = 40;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--cols" => {
+                let Some(value) = args.get(i + 1) else {
+                    eprintln!("{TERMINAL_SESSION_APP_USAGE}");
+                    return Ok(Err(2));
+                };
+                cols = parse_terminal_dimension(value, "--cols")?;
+                i += 2;
+            }
+            "--rows" => {
+                let Some(value) = args.get(i + 1) else {
+                    eprintln!("{TERMINAL_SESSION_APP_USAGE}");
+                    return Ok(Err(2));
+                };
+                rows = parse_terminal_dimension(value, "--rows")?;
+                i += 2;
+            }
+            "help" | "--help" | "-h" => {
+                eprintln!("{TERMINAL_SESSION_APP_USAGE}");
+                return Ok(Err(0));
+            }
+            other => {
+                eprintln!("unknown terminal session app option: {other}");
+                eprintln!("{TERMINAL_SESSION_APP_USAGE}");
+                return Ok(Err(2));
+            }
+        }
+    }
+    Ok(Ok((cols, rows)))
 }
 
 fn parse_terminal_dimension(raw: &str, flag: &str) -> std::io::Result<u16> {
@@ -1021,6 +1070,7 @@ fn print_config_help() {
 fn print_terminal_help() {
     eprintln!("herdr terminal commands:");
     eprintln!("  herdr terminal attach <terminal_id> [--takeover]");
+    eprintln!("  herdr terminal session app [--cols N] [--rows N]");
     eprintln!("  herdr terminal session control <target> [--takeover] [--cols N] [--rows N]");
     eprintln!("  herdr terminal session observe <target> [--cols N] [--rows N]");
     eprintln!("  herdr terminal title set <title>");
@@ -1161,6 +1211,24 @@ mod tests {
                 "--timeout",
                 "5000",
             ]
+        );
+    }
+
+    #[test]
+    fn terminal_app_session_options_default_and_override_geometry() {
+        assert_eq!(
+            super::parse_terminal_app_session_options(&[]).unwrap(),
+            Ok((120, 40))
+        );
+        assert_eq!(
+            super::parse_terminal_app_session_options(&[
+                "--cols".to_string(),
+                "80".to_string(),
+                "--rows".to_string(),
+                "24".to_string(),
+            ])
+            .unwrap(),
+            Ok((80, 24))
         );
     }
 }

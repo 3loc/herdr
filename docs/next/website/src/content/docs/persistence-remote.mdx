@@ -152,6 +152,18 @@ base64 bytes, `terminal.resize` changes the controller viewport,
 `terminal.scroll` scrolls the attached viewport, and `terminal.release` closes
 the controller. Only one controller owns input and resize at a time.
 
+To bridge the complete Herdr interface instead of one pane, use the writable
+full-app controller:
+
+```bash
+herdr terminal session app --cols 120 --rows 40
+```
+
+It uses the same newline-delimited `terminal.frame`, `terminal.input`,
+`terminal.resize`, and `terminal.release` records. The Herdr server remains the
+owner of application state, keybindings, pane navigation, rendering, and the
+terminal processes; the bridge only carries the rendered app stream.
+
 ## Single-process escape hatch
 
 Use `--no-session` to run Herdr without the background server/client split:
