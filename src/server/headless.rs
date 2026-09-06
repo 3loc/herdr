@@ -2760,14 +2760,8 @@ impl HeadlessServer {
         }
     }
 
-    fn send_terminal_stream_detach_shutdown(&mut self, client_id: u64) {
-        if matches!(
-            self.clients.get(&client_id).map(|client| &client.mode),
-            Some(
-                ClientConnectionMode::TerminalAttach { .. }
-                    | ClientConnectionMode::TerminalObserve { .. }
-            )
-        ) {
+    fn send_client_detach_shutdown(&mut self, client_id: u64) {
+        if self.clients.contains_key(&client_id) {
             self.send_to_client(
                 client_id,
                 ServerMessage::ServerShutdown {
@@ -3309,7 +3303,7 @@ impl HeadlessServer {
             }
             ServerEvent::ClientDetach { client_id } => {
                 info!(client_id, "client detached");
-                self.send_terminal_stream_detach_shutdown(client_id);
+                self.send_client_detach_shutdown(client_id);
                 self.remove_client_and_resize_if_needed(client_id);
                 true
             }
@@ -6877,6 +6871,30 @@ next_tab = ""
             let reason = read_server_shutdown_reason(control_rx.recv().expect("shutdown message"));
             assert_eq!(reason, Some("detached".to_owned()));
         });
+    }
+
+    #[test]
+    fn full_app_detach_sends_shutdown_before_removal() {
+        let mut server = test_headless_server();
+        let (writer, control_rx, _render_rx) = test_client_writer();
+        assert!(server.handle_server_event(ServerEvent::ClientConnected {
+            client_id: 7,
+            cols: 80,
+            rows: 24,
+            cell_width_px: 0,
+            cell_height_px: 0,
+            render_encoding: RenderEncoding::TerminalAnsi,
+            keybindings: None,
+            direct_attach_requested: false,
+            direct_graphics: false,
+            writer,
+        }));
+
+        assert!(server.handle_server_event(ServerEvent::ClientDetach { client_id: 7 }));
+
+        assert!(!server.clients.contains_key(&7));
+        let reason = read_server_shutdown_reason(control_rx.recv().expect("shutdown message"));
+        assert_eq!(reason, Some("detached".to_owned()));
     }
 
     #[test]
